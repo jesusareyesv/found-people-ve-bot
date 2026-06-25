@@ -69,6 +69,13 @@ const env = {
   adminChatId: process.env.TELEGRAM_ADMIN_CHAT_ID ? Number(process.env.TELEGRAM_ADMIN_CHAT_ID) : null,
 };
 
+type PendingChatAction =
+  | { kind: "feedback"; expiresAt: number }
+  | { kind: "report"; expiresAt: number };
+
+const pendingChatActions = new Map<number, PendingChatAction>();
+const PENDING_ACTION_TTL_MS = 15 * 60_000;
+
 await ensureSchema();
 setInterval(sweepRateLimitBuckets, 60_000).unref();
 
@@ -199,6 +206,9 @@ async function handleTelegramUpdate(update: TelegramUpdate) {
   }
 
   const text = message.text.trim();
+  const pending = getPendingChatAction(message.chat.id);
+  if (pending && !text.startsWith("/")) return handlePendingChatAction(message, text, pending);
+
   if (text === "/start" || text === "/help") return sendMenu(message.chat.id);
 
   if (text.startsWith("/admin")) {
@@ -222,6 +232,26 @@ async function handleTelegramUpdate(update: TelegramUpdate) {
   }
 
   return sendSearchResults(message.chat.id, text);
+}
+
+function getPendingChatAction(chatId: number) {
+  const pending = pendingChatActions.get(chatId);
+  if (!pending) return null;
+  if (pending.expiresAt < Date.now()) {
+    pendingChatActions.delete(chatId);
+    return null;
+  }
+  return pending;
+}
+
+function setPendingChatAction(chatId: number, kind: PendingChatAction["kind"]) {
+  pendingChatActions.set(chatId, { kind, expiresAt: Date.now() + PENDING_ACTION_TTL_MS });
+}
+
+async function handlePendingChatAction(message: NonNullable<TelegramUpdate["message"]>, text: string, pending: PendingChatAction) {
+  pendingChatActions.delete(message.chat.id);
+  if (pending.kind === "feedback") return submitFeedback(message, text.trim());
+  return submitReport(message, text.trim());
 }
 
 async function handleAdminCommand(message: NonNullable<TelegramUpdate["message"]>, text: string) {
@@ -311,23 +341,49 @@ async function askForSearch(chatId: number) {
 
 async function handleFeedbackCommand(message: NonNullable<TelegramUpdate["message"]>, text: string) {
   const feedback = text.replace(/^\/(?:feedback|suggest)\s*/i, "").trim();
+  if (!feedback) {
+    setPendingChatAction(message.chat.id, "feedback");
+    return sendMessage(message.chat.id, "Claro. Escríbeme tu sugerencia en el próximo mensaje.");
+  }
+  return submitFeedback(message, feedback);
+}
+
+async function submitFeedback(message: NonNullable<TelegramUpdate["message"]>, feedback: string) {
   if (feedback.length < 3) {
-    return sendMessage(message.chat.id, "Envíame tu sugerencia así:\n\n/feedback Escribe aquí tu mensaje");
+    setPendingChatAction(message.chat.id, "feedback");
+    return sendMessage(message.chat.id, "El mensaje está muy corto. Escríbeme un poco más de detalle, por favor.");
   }
 
-  await notifyAdmin(`💬 <b>Feedback recibido</b>\n\n${formatReporter(message)}\n\n<b>Mensaje:</b>\n${escapeHtml(feedback)}`);
+  await notifyAdmin(`💬 <b>Feedback recibido</b>
+
+${formatReporter(message)}
+
+<b>Mensaje:</b>
+${escapeHtml(feedback)}`);
   return sendMessage(message.chat.id, "Gracias. Recibí tu sugerencia y se la envié al equipo.");
 }
 
 async function handleReportCommand(message: NonNullable<TelegramUpdate["message"]>, text: string) {
   const payload = text.replace(/^\/report\s*/i, "").trim();
+  if (!payload) {
+    setPendingChatAction(message.chat.id, "report");
+    return sendMessage(
+      message.chat.id,
+      "Vamos a agregar un reporte ciudadano. Responde con este formato:\n\nNombre Apellido | Ubicación | enlace opcional\n\nEjemplo:\nMaria Perez | Refugio La Carlota | https://ejemplo.com/fuente",
+    );
+  }
+  return submitReport(message, payload);
+}
+
+async function submitReport(message: NonNullable<TelegramUpdate["message"]>, payload: string) {
   const parts = payload.split("|").map((part) => part.trim()).filter(Boolean);
   const [fullName, location, submittedSourceUrl] = parts;
 
   if (!fullName || !location || fullName.length < 4 || location.length < 2) {
+    setPendingChatAction(message.chat.id, "report");
     return sendMessage(
       message.chat.id,
-      "Para reportar una persona encontrada, usa este formato:\n\n/report Nombre Apellido | Ubicación | enlace opcional\n\nEjemplo:\n/report Maria Perez | Refugio La Carlota | https://ejemplo.com/fuente",
+      "No pude leer el reporte. Usa este formato en el próximo mensaje:\n\nNombre Apellido | Ubicación | enlace opcional\n\nEjemplo:\nMaria Perez | Refugio La Carlota | https://ejemplo.com/fuente",
     );
   }
 
@@ -348,9 +404,18 @@ async function handleReportCommand(message: NonNullable<TelegramUpdate["message"
     },
   }]);
 
-  await notifyAdmin(`🆕 <b>Reporte ciudadano insertado</b>\n\n${formatReporter(message)}\n\n<b>Persona:</b> ${escapeHtml(fullName)}\n<b>Ubicación:</b> ${escapeHtml(location)}\n<b>Fuente:</b> <a href="${escapeHtmlAttribute(sourceUrl)}">abrir enlace</a>\n<b>ID:</b> ${escapeHtml(person.id)}`);
+  await notifyAdmin(`🆕 <b>Reporte ciudadano insertado</b>
 
-  return sendMessage(message.chat.id, `Gracias. Agregué el reporte de <b>${escapeHtml(fullName)}</b> a la lista.\n\nSi tienes una fuente verificable, también puedes reenviar el reporte con el enlace.`);
+${formatReporter(message)}
+
+<b>Persona:</b> ${escapeHtml(fullName)}
+<b>Ubicación:</b> ${escapeHtml(location)}
+<b>Fuente:</b> <a href="${escapeHtmlAttribute(sourceUrl)}">abrir enlace</a>
+<b>ID:</b> ${escapeHtml(person.id)}`);
+
+  return sendMessage(message.chat.id, `Gracias. Agregué el reporte de <b>${escapeHtml(fullName)}</b> a la lista.
+
+Si tienes una fuente verificable, también puedes reenviar el reporte con el enlace.`);
 }
 
 async function sendPeoplePage(chatId: number, page: number, messageId?: number) {
