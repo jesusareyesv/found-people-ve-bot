@@ -232,7 +232,7 @@ export async function listRecentCitizenReports(limit: number, status?: RecordSta
   if (status) params.push(status);
 
   const result = await pool.query<FoundPersonWithMetadata>(
-    `${baseSelect()},
+    `SELECT ${selectColumns()},
             created_at AS "createdAt",
             updated_at AS "updatedAt",
             raw->>'provider' AS provider
@@ -249,7 +249,7 @@ export async function listRecentCitizenReports(limit: number, status?: RecordSta
 
 export async function getPersonById(id: string) {
   const result = await pool.query<FoundPersonWithMetadata>(
-    `${baseSelect()},
+    `SELECT ${selectColumns()},
             created_at AS "createdAt",
             updated_at AS "updatedAt",
             raw->>'provider' AS provider
@@ -275,20 +275,19 @@ export async function getBotMetrics() {
 }
 
 function baseSelect() {
-  return `SELECT id,
-              full_name AS "fullName",
-              relevant_info AS "relevantInfo",
-              source_url AS "sourceUrl",
-              status AS "status"
-       FROM found_people`;
+  return `SELECT ${selectColumns()} FROM found_people`;
 }
 
-function returningColumns() {
+function selectColumns() {
   return `id,
           full_name AS "fullName",
           relevant_info AS "relevantInfo",
           source_url AS "sourceUrl",
           status AS "status"`;
+}
+
+function returningColumns() {
+  return selectColumns();
 }
 
 function pageResult(items: FoundPerson[], page: number, pageSize: number, total: number) {
