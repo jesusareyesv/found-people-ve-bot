@@ -29,20 +29,79 @@ export async function ensureSchema() {
 
     CREATE TABLE IF NOT EXISTS found_people (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      nombre_completo TEXT NOT NULL,
-      informacion_relevante TEXT,
-      fuente_url TEXT NOT NULL CHECK (fuente_url ~* '^https?://'),
-      hash_fuente TEXT UNIQUE NOT NULL,
+      full_name TEXT NOT NULL,
+      relevant_info TEXT,
+      source_url TEXT NOT NULL CHECK (source_url ~* '^https?://'),
+      source_hash TEXT UNIQUE NOT NULL,
       raw JSONB NOT NULL DEFAULT '{}'::jsonb,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
-    CREATE INDEX IF NOT EXISTS idx_found_people_nombre
-      ON found_people (lower(nombre_completo));
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'found_people' AND column_name = 'nombre_completo'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'found_people' AND column_name = 'full_name'
+      ) THEN
+        ALTER TABLE found_people RENAME COLUMN nombre_completo TO full_name;
+      END IF;
 
-    CREATE INDEX IF NOT EXISTS idx_found_people_nombre_trgm
-      ON found_people USING gin (nombre_completo gin_trgm_ops);
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'found_people' AND column_name = 'informacion_relevante'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'found_people' AND column_name = 'relevant_info'
+      ) THEN
+        ALTER TABLE found_people RENAME COLUMN informacion_relevante TO relevant_info;
+      END IF;
+
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'found_people' AND column_name = 'fuente_url'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'found_people' AND column_name = 'source_url'
+      ) THEN
+        ALTER TABLE found_people RENAME COLUMN fuente_url TO source_url;
+      END IF;
+
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'found_people' AND column_name = 'hash_fuente'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'found_people' AND column_name = 'source_hash'
+      ) THEN
+        ALTER TABLE found_people RENAME COLUMN hash_fuente TO source_hash;
+      END IF;
+    END $$;
+
+    ALTER TABLE found_people
+      ALTER COLUMN full_name SET NOT NULL,
+      ALTER COLUMN source_url SET NOT NULL,
+      ALTER COLUMN source_hash SET NOT NULL;
+
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'found_people_source_url_http_check'
+      ) THEN
+        ALTER TABLE found_people
+          ADD CONSTRAINT found_people_source_url_http_check CHECK (source_url ~* '^https?://');
+      END IF;
+    END $$;
+
+    CREATE INDEX IF NOT EXISTS idx_found_people_full_name
+      ON found_people (lower(full_name));
+
+    CREATE INDEX IF NOT EXISTS idx_found_people_full_name_trgm
+      ON found_people USING gin (full_name gin_trgm_ops);
 
     CREATE INDEX IF NOT EXISTS idx_found_people_updated_at
       ON found_people (updated_at DESC);
@@ -54,11 +113,11 @@ export async function listPeople(page: number, pageSize: number) {
   const [items, total] = await Promise.all([
     pool.query<FoundPerson>(
       `SELECT id,
-              nombre_completo AS "fullName",
-              informacion_relevante AS "relevantInfo",
-              fuente_url AS "sourceUrl"
+              full_name AS "fullName",
+              relevant_info AS "relevantInfo",
+              source_url AS "sourceUrl"
        FROM found_people
-       ORDER BY lower(nombre_completo) ASC, fuente_url ASC
+       ORDER BY lower(full_name) ASC, source_url ASC
        LIMIT $1 OFFSET $2`,
       [pageSize, offset],
     ),
@@ -74,16 +133,16 @@ export async function searchPeople(name: string, page: number, pageSize: number)
   const [items, total] = await Promise.all([
     pool.query<FoundPerson>(
       `SELECT id,
-              nombre_completo AS "fullName",
-              informacion_relevante AS "relevantInfo",
-              fuente_url AS "sourceUrl"
+              full_name AS "fullName",
+              relevant_info AS "relevantInfo",
+              source_url AS "sourceUrl"
        FROM found_people
-       WHERE nombre_completo ILIKE $1
-       ORDER BY lower(nombre_completo) ASC, fuente_url ASC
+       WHERE full_name ILIKE $1
+       ORDER BY lower(full_name) ASC, source_url ASC
        LIMIT $2 OFFSET $3`,
       [query, pageSize, offset],
     ),
-    pool.query<{ count: string }>("SELECT count(*) FROM found_people WHERE nombre_completo ILIKE $1", [query]),
+    pool.query<{ count: string }>("SELECT count(*) FROM found_people WHERE full_name ILIKE $1", [query]),
   ]);
 
   return pageResult(items.rows, page, pageSize, Number(total.rows[0]?.count ?? 0));
@@ -101,18 +160,18 @@ export async function upsertPeople(people: Array<{
   for (const person of people) {
     const hash = person.sourceHash ?? await sha256(`${person.sourceUrl}:${person.fullName}`);
     const result = await pool.query<FoundPerson>(
-      `INSERT INTO found_people (nombre_completo, informacion_relevante, fuente_url, hash_fuente, raw)
+      `INSERT INTO found_people (full_name, relevant_info, source_url, source_hash, raw)
        VALUES ($1, $2, $3, $4, $5::jsonb)
-       ON CONFLICT (hash_fuente) DO UPDATE SET
-         nombre_completo = EXCLUDED.nombre_completo,
-         informacion_relevante = EXCLUDED.informacion_relevante,
-         fuente_url = EXCLUDED.fuente_url,
+       ON CONFLICT (source_hash) DO UPDATE SET
+         full_name = EXCLUDED.full_name,
+         relevant_info = EXCLUDED.relevant_info,
+         source_url = EXCLUDED.source_url,
          raw = EXCLUDED.raw,
          updated_at = now()
        RETURNING id,
-                 nombre_completo AS "fullName",
-                 informacion_relevante AS "relevantInfo",
-                 fuente_url AS "sourceUrl"`,
+                 full_name AS "fullName",
+                 relevant_info AS "relevantInfo",
+                 source_url AS "sourceUrl"`,
       [person.fullName, person.relevantInfo ?? null, person.sourceUrl, hash, JSON.stringify(person.raw ?? {})],
     );
     rows.push(result.rows[0]);
@@ -124,11 +183,11 @@ export async function upsertPeople(people: Array<{
 export async function deletePersonBySourceUrl(sourceUrl: string) {
   const result = await pool.query<FoundPerson>(
     `DELETE FROM found_people
-     WHERE fuente_url = $1
+     WHERE source_url = $1
      RETURNING id,
-               nombre_completo AS "fullName",
-               informacion_relevante AS "relevantInfo",
-               fuente_url AS "sourceUrl"`,
+               full_name AS "fullName",
+               relevant_info AS "relevantInfo",
+               source_url AS "sourceUrl"`,
     [sourceUrl],
   );
   return result.rows;
