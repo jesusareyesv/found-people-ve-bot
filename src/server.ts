@@ -245,7 +245,7 @@ async function askForSearch(chatId: number) {
 async function sendPeoplePage(chatId: number, page: number, messageId?: number) {
   const result = await listPeople(page, 5);
   const text = formatPeopleList(result.items, `Personas encontradas (${result.page}/${result.totalPages})`, result.total);
-  const buttons = [...sourceButtons(result.items), ...paginationButtons("list", result.page, result.totalPages)];
+  const buttons = paginationButtons("list", result.page, result.totalPages);
   return messageId ? editMessage(chatId, messageId, text, buttons) : sendMessage(chatId, text, buttons);
 }
 
@@ -255,28 +255,24 @@ async function sendSearchResults(chatId: number, query: string) {
 
   const result = await searchPeople(parsed.data, 1, 5);
   const text = result.total === 0
-    ? `No encontré resultados para “${parsed.data}”.\n\nPrueba con menos palabras o revisa la lista completa.`
+    ? `No encontré resultados para “${escapeHtml(parsed.data)}”.\n\nPrueba con menos palabras o revisa la lista completa.`
     : formatPeopleList(result.items, `Resultados para “${parsed.data}”`, result.total);
 
   return sendMessage(chatId, text, [
-    ...sourceButtons(result.items),
     [button("🔎 Buscar otro nombre", "search"), button("📋 Ver lista", "list:1")],
   ]);
 }
 
 function formatPeopleList(items: FoundPerson[], title: string, total: number) {
-  if (items.length === 0) return `${title}\n\nNo hay personas para mostrar.`;
+  if (items.length === 0) return `${escapeHtml(title)}\n\nNo hay personas para mostrar.`;
 
   const lines = items.map((person, index) => [
-    `${index + 1}. ${person.fullName}`,
-    person.relevantInfo ? truncate(person.relevantInfo, 260) : null,
+    `${index + 1}. <b>${escapeHtml(person.fullName)}</b>`,
+    person.relevantInfo ? escapeHtml(truncate(person.relevantInfo, 240)) : null,
+    `<a href="${escapeHtmlAttribute(person.sourceUrl)}">Ver fuente</a>`,
   ].filter(Boolean).join("\n"));
 
-  return truncate(`${title}\nTotal: ${total}\n\n${lines.join("\n\n")}`, 3500);
-}
-
-function sourceButtons(items: FoundPerson[]): InlineButton[][] {
-  return items.map((person, index) => [urlButton(`Fuente ${index + 1}`, person.sourceUrl)]);
+  return truncate(`${escapeHtml(title)}\nTotal: ${total}\n\n${lines.join("\n\n")}`, 3500);
 }
 
 function paginationButtons(prefix: string, page: number, totalPages: number): InlineButton[][] {
@@ -290,18 +286,26 @@ function button(text: string, callbackData: string): InlineButton {
   return { text, callback_data: callbackData };
 }
 
-function urlButton(text: string, url: string): InlineButton {
-  return { text, url };
-}
-
 function truncate(value: string, max: number) {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function escapeHtmlAttribute(value: string) {
+  return escapeHtml(value).replace(/"/g, "&quot;");
 }
 
 async function sendMessage(chatId: number, text: string, inlineKeyboard?: InlineButton[][]) {
   return telegram("sendMessage", {
     chat_id: chatId,
     text,
+    parse_mode: "HTML",
     disable_web_page_preview: true,
     reply_markup: inlineKeyboard ? { inline_keyboard: inlineKeyboard } : undefined,
   });
@@ -312,6 +316,7 @@ async function editMessage(chatId: number, messageId: number, text: string, inli
     chat_id: chatId,
     message_id: messageId,
     text,
+    parse_mode: "HTML",
     disable_web_page_preview: true,
     reply_markup: inlineKeyboard ? { inline_keyboard: inlineKeyboard } : undefined,
   });
