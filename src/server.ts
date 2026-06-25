@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
+import { ensureSchema, listPeople, requiredEnv, searchPeople, upsertPeople, type FoundPerson } from "./db.js";
 
 const PeopleQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -11,11 +11,15 @@ const SearchQuerySchema = PeopleQuerySchema.extend({
   name: z.string().trim().min(2).max(120),
 });
 
-type FoundPerson = {
-  nombre_completo: string;
-  informacion_relevante: string | null;
-  fuente_url: string;
-};
+const IngestSchema = z.object({
+  people: z.array(z.object({
+    nombre_completo: z.string().trim().min(2).max(200),
+    informacion_relevante: z.string().trim().max(5000).nullable().optional(),
+    fuente_url: z.string().url(),
+    hash_fuente: z.string().trim().min(16).max(128).optional(),
+    raw: z.record(z.string(), z.unknown()).optional(),
+  })).min(1).max(200),
+});
 
 type TelegramUpdate = {
   message?: {
@@ -38,15 +42,12 @@ type InlineButton =
 
 const env = {
   port: Number(process.env.PORT ?? 3000),
-  supabaseUrl: requiredEnv("SUPABASE_URL"),
-  supabaseKey: requiredEnv("SUPABASE_ANON_KEY"),
   telegramToken: process.env.TELEGRAM_BOT_TOKEN,
   telegramWebhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET,
+  ingestSecret: process.env.INGEST_SECRET,
 };
 
-const supabase = createClient(env.supabaseUrl, env.supabaseKey, {
-  auth: { persistSession: false, autoRefreshToken: false },
-});
+await ensureSchema();
 
 const server = createServer(async (request, response) => {
   try {
@@ -68,6 +69,17 @@ const server = createServer(async (request, response) => {
       return json(response, 200, await searchPeople(parsed.data.name, parsed.data.page, parsed.data.pageSize));
     }
 
+    if (request.method === "POST" && url.pathname === "/api/ingest") {
+      const authError = validateBearer(request.headers.authorization, env.ingestSecret);
+      if (authError) return json(response, authError.status, { error: authError.message });
+
+      const parsed = IngestSchema.safeParse(await readJson(request));
+      if (!parsed.success) return json(response, 400, { error: "Invalid ingest payload", details: parsed.error.flatten() });
+
+      const rows = await upsertPeople(parsed.data.people);
+      return json(response, 200, { upserted: rows.length, people: rows });
+    }
+
     if (request.method === "POST" && url.pathname === "/telegram/webhook") {
       const secretError = validateTelegramSecret(request.headers["x-telegram-bot-api-secret-token"]);
       if (secretError) return json(response, 401, { error: secretError });
@@ -85,7 +97,7 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(env.port, () => {
-  console.log(`found-persons-telegram-bot listening on :${env.port}`);
+  console.log(`found-people-ve-bot listening on :${env.port}`);
 });
 
 const TelegramUpdateSchema = z.object({
@@ -103,54 +115,15 @@ const TelegramUpdateSchema = z.object({
   }).optional(),
 });
 
-function requiredEnv(name: string) {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is required`);
-  return value;
-}
-
 function validateTelegramSecret(header: string | string[] | undefined) {
   if (!env.telegramWebhookSecret) return null;
   return header === env.telegramWebhookSecret ? null : "Invalid Telegram webhook secret";
 }
 
-async function listPeople(page: number, pageSize: number) {
-  const people = await fetchPublicPeople();
-  return pageResult(people, page, pageSize, people.length);
-}
-
-async function searchPeople(name: string, page: number, pageSize: number) {
-  const normalizedName = normalize(name);
-  const people = (await fetchPublicPeople())
-    .filter((person) => normalize(person.nombre_completo).includes(normalizedName));
-  return pageResult(people, page, pageSize, people.length);
-}
-
-async function fetchPublicPeople() {
-  const { data, error } = await supabase.rpc("personas_encontradas_publicas");
-  if (error) throw new Error(error.message);
-  return ((data ?? []) as FoundPerson[]).sort((a, b) => {
-    const byName = a.nombre_completo.localeCompare(b.nombre_completo, "es", { sensitivity: "base" });
-    return byName || a.fuente_url.localeCompare(b.fuente_url);
-  });
-}
-
-function normalize(value: string) {
-  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
-}
-
-function pageResult(items: FoundPerson[], page: number, pageSize: number, total: number) {
-  return {
-    items,
-    page,
-    pageSize,
-    total,
-    totalPages: Math.max(1, Math.ceil(total / pageSize)),
-  };
-}
-
-function escapeLike(value: string) {
-  return value.replace(/[\\%_]/g, (match) => `\\${match}`);
+function validateBearer(header: string | undefined, expected: string | undefined) {
+  if (!expected) return { status: 503, message: "INGEST_SECRET is not configured" };
+  if (header !== `Bearer ${expected}`) return { status: 401, message: "Unauthorized" };
+  return null;
 }
 
 async function handleTelegramUpdate(update: TelegramUpdate) {
@@ -160,19 +133,16 @@ async function handleTelegramUpdate(update: TelegramUpdate) {
   if (!message?.text) return;
 
   const text = message.text.trim();
-  if (text === "/start" || text === "/help") {
-    return sendMenu(message.chat.id);
-  }
+  if (text === "/start" || text === "/help") return sendMenu(message.chat.id);
+  if (text === "/lista") return sendPeoplePage(message.chat.id, 1);
 
   if (text.startsWith("/buscar")) {
     const query = text.replace(/^\/buscar\s*/i, "").trim();
     if (!query) return askForSearch(message.chat.id);
-    return sendSearchResults(message.chat.id, query, 1);
+    return sendSearchResults(message.chat.id, query);
   }
 
-  if (text === "/lista") return sendPeoplePage(message.chat.id, 1);
-
-  return sendSearchResults(message.chat.id, text, 1);
+  return sendSearchResults(message.chat.id, text);
 }
 
 async function handleCallback(callback: NonNullable<TelegramUpdate["callback_query"]>) {
@@ -209,7 +179,7 @@ function menuText() {
   return "Hola. Puedo ayudarte a consultar personas encontradas/localizadas.\n\nPuedes buscar por nombre o ver la lista completa paginada.";
 }
 
-function menuButtons() {
+function menuButtons(): InlineButton[][] {
   return [
     [button("🔎 Buscar por nombre", "search")],
     [button("📋 Ver lista", "list:1")],
@@ -227,8 +197,8 @@ async function sendPeoplePage(chatId: number, page: number, messageId?: number) 
   return messageId ? editMessage(chatId, messageId, text, buttons) : sendMessage(chatId, text, buttons);
 }
 
-async function sendSearchResults(chatId: number, query: string, page: number) {
-  const result = await searchPeople(query, page, 5);
+async function sendSearchResults(chatId: number, query: string) {
+  const result = await searchPeople(query, 1, 5);
   const text = result.total === 0
     ? `No encontré resultados para “${query}”.\n\nPrueba con menos palabras o revisa la lista completa.`
     : formatPeopleList(result.items, `Resultados para “${query}”`, result.total);
@@ -273,7 +243,7 @@ function truncate(value: string, max: number) {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
 }
 
-async function sendMessage(chatId: number, text: string, inlineKeyboard?: ReturnType<typeof button>[][]) {
+async function sendMessage(chatId: number, text: string, inlineKeyboard?: InlineButton[][]) {
   return telegram("sendMessage", {
     chat_id: chatId,
     text,
@@ -282,7 +252,7 @@ async function sendMessage(chatId: number, text: string, inlineKeyboard?: Return
   });
 }
 
-async function editMessage(chatId: number, messageId: number, text: string, inlineKeyboard?: ReturnType<typeof button>[][]) {
+async function editMessage(chatId: number, messageId: number, text: string, inlineKeyboard?: InlineButton[][]) {
   return telegram("editMessageText", {
     chat_id: chatId,
     message_id: messageId,
