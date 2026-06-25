@@ -71,7 +71,6 @@ const env = {
 
 type PendingChatAction =
   | { kind: "feedback"; expiresAt: number }
-  | { kind: "correction"; personId: string; expiresAt: number }
   | { kind: "report_name"; draft: Partial<ReportDraft>; expiresAt: number }
   | { kind: "report_location"; draft: Partial<ReportDraft>; expiresAt: number }
   | { kind: "report_source"; draft: Partial<ReportDraft>; expiresAt: number }
@@ -272,10 +271,6 @@ async function handlePendingChatAction(message: NonNullable<TelegramUpdate["mess
     pendingChatActions.delete(message.chat.id);
     return submitFeedback(message, text.trim());
   }
-  if (pending.kind === "correction") {
-    pendingChatActions.delete(message.chat.id);
-    return submitCorrection(message, pending.personId, text.trim());
-  }
   return handleReportStep(message, text.trim(), pending);
 }
 
@@ -389,14 +384,6 @@ async function handleCallback(callback: NonNullable<TelegramUpdate["callback_que
     return editMessage(chatId, messageId, "Escribe el nombre o nombre y apellido que quieres buscar.\n\nEjemplo: Maria Perez", [[button("📋 Ver lista", "list:1")]]);
   }
 
-  const correctionMatch = data.match(/^corr:([a-f0-9]{12})$/);
-  if (correctionMatch) {
-    const personId = resolvePersonId(correctionMatch[1]);
-    setPendingChatAction(chatId, { kind: "correction", personId });
-    await answerCallback(callback.id);
-    return sendMessage(chatId, "Cuéntame qué corrección o información adicional tienes sobre ese resultado.");
-  }
-
   const adminActionMatch = data.match(/^adm:(verify|review|hide):([a-f0-9]{12})$/);
   if (adminActionMatch && isAdminChat(chatId)) {
     const status = adminActionMatch[1] === "verify" ? "verified" : adminActionMatch[1] === "review" ? "needs_review" : "removed";
@@ -456,7 +443,7 @@ Los datos vienen de fuentes públicas, reportes ciudadanos y transcripciones de 
 
 Cada resultado muestra un enlace cuando está disponible. Los reportes ciudadanos ayudan en la emergencia, pero no reemplazan confirmación familiar, canales oficiales o la fuente original.
 
-Si ves un error, usa el botón <b>Corregir</b> en el resultado o escribe /feedback.`;
+Si ves un error, escribe /feedback para reportarlo.`;
 }
 
 async function handleFeedbackCommand(message: NonNullable<TelegramUpdate["message"]>, text: string) {
@@ -563,15 +550,13 @@ ${formatReporter(message)}
 
 ${formatAdminPerson(person)}`, adminActionButtons(person.id));
 
-  return sendMessage(message.chat.id, `Gracias. Agregué el reporte de <b>${escapeHtml(fullName)}</b> a la lista.
-
-Si luego detectas un error, puedes usar el botón <b>Corregir</b> en el resultado.`);
+  return sendMessage(message.chat.id, `Gracias. Agregué el reporte de <b>${escapeHtml(fullName)}</b> a la lista.\n\nSi luego detectas un error, puedes escribir /feedback.`);
 }
 
 async function sendPeoplePage(chatId: number, page: number, messageId?: number) {
   const result = await listPeople(page, 5);
   const text = formatPeopleList(result.items, `Personas encontradas (${result.page}/${result.totalPages})`, result.total);
-  const buttons = [...correctionButtons(result.items), ...paginationButtons("list", result.page, result.totalPages)];
+  const buttons = paginationButtons("list", result.page, result.totalPages);
   return messageId ? editMessage(chatId, messageId, text, buttons) : sendMessage(chatId, text, buttons);
 }
 
@@ -586,7 +571,6 @@ async function sendSearchResults(chatId: number, query: string) {
     : formatPeopleList(result.items, `Resultados para “${parsed.data}”`, result.total);
 
   return sendMessage(chatId, text, [
-    ...correctionButtons(result.items),
     [button("🔎 Buscar otro nombre", "search"), button("📋 Ver lista", "list:1")],
   ]);
 }
@@ -625,28 +609,6 @@ function formatReporter(message: NonNullable<TelegramUpdate["message"]>) {
 async function notifyAdmin(text: string, inlineKeyboard?: InlineButton[][]) {
   if (!env.adminChatId) return;
   await sendMessage(env.adminChatId, text, inlineKeyboard);
-}
-
-async function submitCorrection(message: NonNullable<TelegramUpdate["message"]>, personId: string, correction: string) {
-  if (correction.length < 3) {
-    setPendingChatAction(message.chat.id, { kind: "correction", personId });
-    return sendMessage(message.chat.id, "La corrección está muy corta. Escríbeme un poco más de detalle.");
-  }
-  await incrementMetric("telegram_correction");
-  const person = await getPersonById(personId);
-  await notifyAdmin(`✏️ <b>Corrección recibida</b>
-
-${formatReporter(message)}
-
-${person ? formatAdminPerson(person) : `ID: <code>${escapeHtml(personId)}</code>`}
-
-<b>Mensaje:</b>
-${escapeHtml(correction)}`, person ? adminActionButtons(person.id) : undefined);
-  return sendMessage(message.chat.id, "Gracias. Envié tu corrección para revisión.");
-}
-
-function correctionButtons(items: FoundPerson[]): InlineButton[][] {
-  return items.map((person, index) => [button(`✏️ Corregir ${index + 1}`, `corr:${rememberPersonId(person.id)}`)]);
 }
 
 function adminActionButtons(personId: string): InlineButton[][] {
