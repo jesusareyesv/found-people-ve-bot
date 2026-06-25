@@ -18,10 +18,10 @@ const SearchQuerySchema = PeopleQuerySchema.extend({
 });
 
 const PersonPayloadSchema = z.object({
-  nombre_completo: z.string().trim().min(2).max(200),
-  informacion_relevante: z.string().trim().max(5000).nullable().optional(),
-  fuente_url: z.string().url().refine((url) => /^https?:\/\//i.test(url), "Only http(s) URLs are allowed"),
-  hash_fuente: z.string().trim().min(16).max(128).optional(),
+  fullName: z.string().trim().min(2).max(200),
+  relevantInfo: z.string().trim().max(5000).nullable().optional(),
+  sourceUrl: z.string().url().refine((url) => /^https?:\/\//i.test(url), "Only http(s) URLs are allowed"),
+  sourceHash: z.string().trim().min(16).max(128).optional(),
   raw: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -30,7 +30,7 @@ const IngestSchema = z.object({
 });
 
 const DeletePersonSchema = z.object({
-  fuente_url: z.string().url().refine((url) => /^https?:\/\//i.test(url), "Only http(s) URLs are allowed"),
+  sourceUrl: z.string().url().refine((url) => /^https?:\/\//i.test(url), "Only http(s) URLs are allowed"),
 });
 
 type TelegramUpdate = {
@@ -116,7 +116,7 @@ const server = createServer(async (request, response) => {
       const parsed = DeletePersonSchema.safeParse(await readJson(request, MAX_JSON_BODY_BYTES));
       if (!parsed.success) return json(response, 400, { error: "Invalid delete payload" });
 
-      const rows = await deletePersonBySourceUrl(parsed.data.fuente_url);
+      const rows = await deletePersonBySourceUrl(parsed.data.sourceUrl);
       return json(response, 200, { deleted: rows.length, people: rows });
     }
 
@@ -268,15 +268,15 @@ function formatPeopleList(items: FoundPerson[], title: string, total: number) {
   if (items.length === 0) return `${title}\n\nNo hay personas para mostrar.`;
 
   const lines = items.map((person, index) => [
-    `${index + 1}. ${person.nombre_completo}`,
-    person.informacion_relevante ? truncate(person.informacion_relevante, 260) : null,
+    `${index + 1}. ${person.fullName}`,
+    person.relevantInfo ? truncate(person.relevantInfo, 260) : null,
   ].filter(Boolean).join("\n"));
 
   return truncate(`${title}\nTotal: ${total}\n\n${lines.join("\n\n")}`, 3500);
 }
 
 function sourceButtons(items: FoundPerson[]): InlineButton[][] {
-  return items.map((person, index) => [urlButton(`Fuente ${index + 1}`, person.fuente_url)]);
+  return items.map((person, index) => [urlButton(`Fuente ${index + 1}`, person.sourceUrl)]);
 }
 
 function paginationButtons(prefix: string, page: number, totalPages: number): InlineButton[][] {

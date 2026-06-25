@@ -4,9 +4,9 @@ const { Pool } = pg;
 
 export type FoundPerson = {
   id: string;
-  nombre_completo: string;
-  informacion_relevante: string | null;
-  fuente_url: string;
+  fullName: string;
+  relevantInfo: string | null;
+  sourceUrl: string;
 };
 
 export const pool = new Pool({
@@ -53,7 +53,10 @@ export async function listPeople(page: number, pageSize: number) {
   const offset = (page - 1) * pageSize;
   const [items, total] = await Promise.all([
     pool.query<FoundPerson>(
-      `SELECT id, nombre_completo, informacion_relevante, fuente_url
+      `SELECT id,
+              nombre_completo AS "fullName",
+              informacion_relevante AS "relevantInfo",
+              fuente_url AS "sourceUrl"
        FROM found_people
        ORDER BY lower(nombre_completo) ASC, fuente_url ASC
        LIMIT $1 OFFSET $2`,
@@ -70,7 +73,10 @@ export async function searchPeople(name: string, page: number, pageSize: number)
   const query = `%${name}%`;
   const [items, total] = await Promise.all([
     pool.query<FoundPerson>(
-      `SELECT id, nombre_completo, informacion_relevante, fuente_url
+      `SELECT id,
+              nombre_completo AS "fullName",
+              informacion_relevante AS "relevantInfo",
+              fuente_url AS "sourceUrl"
        FROM found_people
        WHERE nombre_completo ILIKE $1
        ORDER BY lower(nombre_completo) ASC, fuente_url ASC
@@ -84,16 +90,16 @@ export async function searchPeople(name: string, page: number, pageSize: number)
 }
 
 export async function upsertPeople(people: Array<{
-  nombre_completo: string;
-  informacion_relevante?: string | null;
-  fuente_url: string;
-  hash_fuente?: string;
+  fullName: string;
+  relevantInfo?: string | null;
+  sourceUrl: string;
+  sourceHash?: string;
   raw?: Record<string, unknown>;
 }>) {
   const rows: FoundPerson[] = [];
 
   for (const person of people) {
-    const hash = person.hash_fuente ?? await sha256(`${person.fuente_url}:${person.nombre_completo}`);
+    const hash = person.sourceHash ?? await sha256(`${person.sourceUrl}:${person.fullName}`);
     const result = await pool.query<FoundPerson>(
       `INSERT INTO found_people (nombre_completo, informacion_relevante, fuente_url, hash_fuente, raw)
        VALUES ($1, $2, $3, $4, $5::jsonb)
@@ -103,8 +109,11 @@ export async function upsertPeople(people: Array<{
          fuente_url = EXCLUDED.fuente_url,
          raw = EXCLUDED.raw,
          updated_at = now()
-       RETURNING id, nombre_completo, informacion_relevante, fuente_url`,
-      [person.nombre_completo, person.informacion_relevante ?? null, person.fuente_url, hash, JSON.stringify(person.raw ?? {})],
+       RETURNING id,
+                 nombre_completo AS "fullName",
+                 informacion_relevante AS "relevantInfo",
+                 fuente_url AS "sourceUrl"`,
+      [person.fullName, person.relevantInfo ?? null, person.sourceUrl, hash, JSON.stringify(person.raw ?? {})],
     );
     rows.push(result.rows[0]);
   }
@@ -112,12 +121,15 @@ export async function upsertPeople(people: Array<{
   return rows;
 }
 
-export async function deletePersonBySourceUrl(fuenteUrl: string) {
+export async function deletePersonBySourceUrl(sourceUrl: string) {
   const result = await pool.query<FoundPerson>(
     `DELETE FROM found_people
      WHERE fuente_url = $1
-     RETURNING id, nombre_completo, informacion_relevante, fuente_url`,
-    [fuenteUrl],
+     RETURNING id,
+               nombre_completo AS "fullName",
+               informacion_relevante AS "relevantInfo",
+               fuente_url AS "sourceUrl"`,
+    [sourceUrl],
   );
   return result.rows;
 }

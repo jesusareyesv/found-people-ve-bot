@@ -35,7 +35,7 @@ PUBLIC_BASE_URL=
 
 ## Ingesta
 
-`POST /api/ingest` hace upsert por `hash_fuente`. Si no se envía `hash_fuente`, el backend genera uno con `fuente_url:nombre_completo`.
+`POST /api/ingest` does an upsert by `sourceHash`. If `sourceHash` is omitted, the backend generates one from `sourceUrl:fullName`.
 
 ```bash
 curl -X POST "$PUBLIC_BASE_URL/api/ingest" \
@@ -44,9 +44,9 @@ curl -X POST "$PUBLIC_BASE_URL/api/ingest" \
   -d '{
     "people": [
       {
-        "nombre_completo": "Maria Perez",
-        "informacion_relevante": "Encontrada en refugio La Carlota",
-        "fuente_url": "https://example.com/fuente"
+        "fullName": "Maria Perez",
+        "relevantInfo": "Encontrada en refugio La Carlota",
+        "sourceUrl": "https://example.com/fuente"
       }
     ]
   }'
@@ -73,7 +73,7 @@ curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
 curl -X DELETE "$PUBLIC_BASE_URL/api/people" \
   -H "Authorization: Bearer $INGEST_SECRET" \
   -H "Content-Type: application/json" \
-  -d '{"fuente_url":"https://example.com/fuente"}'
+  -d '{"sourceUrl":"https://example.com/fuente"}'
 ```
 
 ## Seguridad y límites
