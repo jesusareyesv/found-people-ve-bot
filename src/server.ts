@@ -242,6 +242,7 @@ server.keepAliveTimeout = 5_000;
 
 server.listen(env.port, () => {
   console.log(`found-people-ve-bot listening on :${env.port}`);
+  captureSystem("server_started", { analytics: analyticsEnabled(), port: env.port });
 });
 
 const TelegramUpdateSchema = z.object({

@@ -12,8 +12,8 @@ if (apiKey && !salt) {
 const client = apiKey
   ? new PostHog(apiKey, {
       host,
-      flushAt: 20,
-      flushInterval: 10_000,
+      flushAt: 1,
+      flushInterval: 1_000,
     })
   : null;
 
