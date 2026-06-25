@@ -159,8 +159,9 @@ ANALYTICS_HASH_SALT=
 
 Notas de privacidad:
 
-- No se envían nombres de personas, búsquedas, ubicaciones, notas, usernames, URLs, tokens ni IDs raw.
+- No se envían nombres de personas buscadas, búsquedas, ubicaciones, notas, URLs, tokens ni IDs raw.
 - IDs de Telegram/IP se hashean con `ANALYTICS_HASH_SALT` o `TELEGRAM_WEBHOOK_SECRET`.
+- Si Telegram provee `username`, se usa como propiedad de identificación `telegramUsername` en PostHog para seguimiento operacional.
 - Si `POSTHOG_API_KEY` existe, producción debe tener `ANALYTICS_HASH_SALT` o `TELEGRAM_WEBHOOK_SECRET` configurado.
 
 Eventos principales:

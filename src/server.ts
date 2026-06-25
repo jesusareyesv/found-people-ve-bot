@@ -2,7 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { z } from "zod";
 import { deletePersonById, deletePersonBySourceUrl, ensureSchema, getFoundPeopleStats, getPersonById, incrementMetric, listPeople, listRecentCitizenReports, searchPeople, updatePersonStatus, upsertPeople, type FoundPerson, type RecordStatus } from "./db.js";
-import { analyticsEnabled, capture, captureSystem, hashIdentifier, shutdownAnalytics } from "./analytics.js";
+import { analyticsEnabled, capture, captureSystem, hashIdentifier, identify, shutdownAnalytics } from "./analytics.js";
 import { rateLimit, sweepRateLimitBuckets } from "./rate-limit.js";
 
 const MAX_JSON_BODY_BYTES = 256 * 1024;
@@ -342,6 +342,15 @@ function telegramEvent(event: string, chatId: number) {
   return event;
 }
 
+function identifyTelegramUser(message: NonNullable<TelegramUpdate["message"]>) {
+  const username = message.from?.username?.trim();
+  if (!username) return;
+  identify(telegramDistinctId(message.chat.id, message.from?.id), {
+    telegramUsername: username,
+    telegramHasUsername: true,
+  });
+}
+
 function captureTelegramCommand(message: NonNullable<TelegramUpdate["message"]>, command: string, properties: Record<string, string | number | boolean | null | undefined> = {}) {
   capture("telegram_command", telegramDistinctId(message.chat.id, message.from?.id), {
     command,
@@ -386,6 +395,7 @@ async function handleTelegramUpdate(update: TelegramUpdate) {
   }
 
   const text = message.text.trim();
+  identifyTelegramUser(message);
   capture(telegramEvent("message_received", message.chat.id), telegramDistinctId(message.chat.id, message.from?.id), {
     chatType: "direct_or_group",
     isCommand: text.startsWith("/"),

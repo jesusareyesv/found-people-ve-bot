@@ -50,6 +50,18 @@ export function captureSystem(event: string, properties: AnalyticsProperties = {
   capture(event, "system", properties);
 }
 
+export function identify(distinctId: string, properties: AnalyticsProperties = {}) {
+  if (!client) return;
+  try {
+    client.identify({
+      distinctId,
+      properties: cleanProperties(properties),
+    });
+  } catch (error) {
+    console.error(JSON.stringify({ level: "warn", event: "analytics_identify_failed", message: error instanceof Error ? error.message : "unknown" }));
+  }
+}
+
 export async function shutdownAnalytics() {
   try {
     await client?.shutdown();
