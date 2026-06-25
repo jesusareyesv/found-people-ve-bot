@@ -395,6 +395,7 @@ async function handleTelegramUpdate(update: TelegramUpdate) {
   if (pending && !text.startsWith("/")) return handlePendingChatAction(message, text, pending);
 
   if (isCommand(text, "start") || isCommand(text, "help")) {
+    pendingChatActions.delete(message.chat.id);
     captureTelegramCommand(message, isCommand(text, "start") ? "start" : "help");
     return sendMenu(message.chat.id);
   }
@@ -402,7 +403,8 @@ async function handleTelegramUpdate(update: TelegramUpdate) {
     captureTelegramCommand(message, "cancel");
     return cancelPendingAction(message.chat.id);
   }
-  if (text.startsWith("/source")) {
+  if (isCommand(text, "source")) {
+    pendingChatActions.delete(message.chat.id);
     captureTelegramCommand(message, "source");
     return handleSourceCommand(message, text);
   }
@@ -412,22 +414,26 @@ async function handleTelegramUpdate(update: TelegramUpdate) {
   }
 
   if (isCommand(text, "list") || isCommand(text, "lista")) {
+    pendingChatActions.delete(message.chat.id);
     await incrementMetric("telegram_list");
     captureTelegramCommand(message, "list");
     return sendPeoplePage(message.chat.id, 1);
   }
 
   if (isCommand(text, "feedback") || isCommand(text, "suggest")) {
+    pendingChatActions.delete(message.chat.id);
     captureTelegramCommand(message, "feedback");
     return handleFeedbackCommand(message, text);
   }
 
   if (isCommand(text, "report")) {
+    pendingChatActions.delete(message.chat.id);
     captureTelegramCommand(message, "report");
     return handleReportCommand(message, text);
   }
 
   if (isCommand(text, "search") || isCommand(text, "buscar")) {
+    pendingChatActions.delete(message.chat.id);
     const query = commandPayload(text);
     captureTelegramCommand(message, "search", { hasQuery: Boolean(query) });
     if (!query) return askForSearch(message.chat.id);
