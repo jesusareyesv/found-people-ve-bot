@@ -19,6 +19,8 @@ El servicio vive en Railway y usa Railway Postgres como base de datos propia.
 GET /health
 GET /api/search?name=Maria&page=1&pageSize=5
 GET /api/people?page=1&pageSize=5
+GET /api/v1/found-people?page=1&pageSize=10
+POST /api/v1/found-people/reports
 POST /api/ingest
 DELETE /api/people
 POST /telegram/webhook
@@ -35,6 +37,94 @@ TELEGRAM_WEBHOOK_SECRET=
 TELEGRAM_ADMIN_CHAT_ID=
 PUBLIC_BASE_URL=
 ```
+
+## API externa v1
+
+### Listar personas encontradas
+
+```http
+GET /api/v1/found-people?page=1&pageSize=10
+```
+
+Respuesta:
+
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "fullName": "Maria Perez",
+      "relevantInfo": "Hospital / refugio / nota pública",
+      "sourceUrl": "https://example.com/fuente",
+      "status": "verified"
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "pageSize": 10,
+    "total": 352,
+    "totalPages": 36
+  }
+}
+```
+
+Notas de seguridad:
+
+- Solo devuelve registros visibles; registros `removed` quedan excluidos.
+- `page` máximo: 500.
+- `pageSize` máximo: 10.
+- Tiene rate limit por IP.
+
+### Reportar una persona encontrada
+
+```http
+POST /api/v1/found-people/reports
+Authorization: Bearer $EXTERNAL_API_SECRET
+Content-Type: application/json
+Idempotency-Key: optional-stable-report-id
+```
+
+Payload:
+
+```json
+{
+  "fullName": "Maria Perez",
+  "location": "Refugio La Carlota",
+  "sourceUrl": "https://example.com/fuente-opcional",
+  "notes": "Información adicional opcional",
+  "reporter": {
+    "service": "nombre-del-servicio",
+    "name": "nombre opcional",
+    "contact": "contacto opcional"
+  }
+}
+```
+
+Respuesta `201`:
+
+```json
+{
+  "data": {
+    "id": "uuid",
+    "fullName": "Maria Perez",
+    "relevantInfo": "Reporte externo — ubicación: Refugio La Carlota",
+    "sourceUrl": "https://example.com/fuente-opcional",
+    "status": "citizen_report"
+  }
+}
+```
+
+Buenas prácticas aplicadas:
+
+- Usa un secreto separado de `INGEST_SECRET`.
+- El cliente externo no puede elegir `status`; siempre se guarda como `citizen_report`.
+- El hash/idempotencia se genera server-side.
+- El JSON usa schema estricto: campos inesperados son rechazados.
+- `sourceUrl`, si se envía, debe ser `http(s)`.
+- El body máximo es 256 KB.
+- JSON inválido responde `400`; body demasiado grande responde `413`.
+- Tiene rate limit por IP y por token.
+- Notifica al admin para revisión operacional.
 
 ## Ingesta
 

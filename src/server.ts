@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { z } from "zod";
 import { deletePersonById, deletePersonBySourceUrl, ensureSchema, getFoundPeopleStats, getPersonById, incrementMetric, listPeople, listRecentCitizenReports, searchPeople, updatePersonStatus, upsertPeople, type FoundPerson, type RecordStatus } from "./db.js";
@@ -7,6 +8,7 @@ const MAX_JSON_BODY_BYTES = 256 * 1024;
 const PUBLIC_API_LIMIT = { count: 60, windowMs: 60_000 };
 const TELEGRAM_CHAT_LIMIT = { count: 20, windowMs: 60_000 };
 const ADMIN_API_LIMIT = { count: 20, windowMs: 60_000 };
+const EXTERNAL_REPORT_API_LIMIT = { count: 30, windowMs: 60_000 };
 
 const PeopleQuerySchema = z.object({
   page: z.coerce.number().int().min(1).max(500).default(1),
@@ -32,6 +34,18 @@ const IngestSchema = z.object({
 const DeletePersonSchema = z.object({
   sourceUrl: z.string().url().refine((url) => /^https?:\/\//i.test(url), "Only http(s) URLs are allowed"),
 });
+
+const ExternalReportSchema = z.object({
+  fullName: z.string().trim().min(2).max(200),
+  location: z.string().trim().min(2).max(300),
+  sourceUrl: z.string().trim().url().refine((url) => /^https?:\/\//i.test(url), "Only http(s) URLs are allowed").optional(),
+  notes: z.string().trim().max(1000).optional(),
+  reporter: z.object({
+    name: z.string().trim().max(120).optional(),
+    contact: z.string().trim().max(200).optional(),
+    service: z.string().trim().max(80).optional(),
+  }).strict().optional(),
+}).strict();
 
 type TelegramUser = {
   id: number;
@@ -66,6 +80,8 @@ const env = {
   telegramToken: process.env.TELEGRAM_BOT_TOKEN,
   telegramWebhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET,
   ingestSecret: process.env.INGEST_SECRET,
+  externalApiSecret: process.env.EXTERNAL_API_SECRET,
+  publicBaseUrl: process.env.PUBLIC_BASE_URL,
   adminChatId: process.env.TELEGRAM_ADMIN_CHAT_ID ? Number(process.env.TELEGRAM_ADMIN_CHAT_ID) : null,
 };
 
@@ -115,6 +131,49 @@ const server = createServer(async (request, response) => {
       return json(response, 200, await searchPeople(parsed.data.name, parsed.data.page, parsed.data.pageSize));
     }
 
+    if (request.method === "GET" && url.pathname === "/api/v1/found-people") {
+      const limited = applyRateLimit(response, `external-list:${clientKey}`, PUBLIC_API_LIMIT.count, PUBLIC_API_LIMIT.windowMs);
+      if (limited) return;
+
+      const parsed = PeopleQuerySchema.safeParse(Object.fromEntries(url.searchParams));
+      if (!parsed.success) return json(response, 400, { error: "Invalid pagination" });
+
+      const result = await listPeople(parsed.data.page, parsed.data.pageSize);
+      await incrementMetric("external_api_list");
+      return json(response, 200, {
+        data: result.items,
+        pagination: {
+          page: result.page,
+          pageSize: result.pageSize,
+          total: result.total,
+          totalPages: result.totalPages,
+        },
+      });
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/v1/found-people/reports") {
+      const limited = applyRateLimit(response, `external-report:${clientKey}`, EXTERNAL_REPORT_API_LIMIT.count, EXTERNAL_REPORT_API_LIMIT.windowMs);
+      if (limited) return;
+
+      const authError = validateBearerSecure(request.headers.authorization, env.externalApiSecret, "EXTERNAL_API_SECRET");
+      if (authError) return json(response, authError.status, { error: authError.message });
+
+      const authLimited = applyRateLimit(response, `external-report-auth:${clientKey}:${hashForRateLimit(request.headers.authorization ?? "")}`, EXTERNAL_REPORT_API_LIMIT.count, EXTERNAL_REPORT_API_LIMIT.windowMs);
+      if (authLimited) return;
+
+      if (!isJsonRequest(request)) return json(response, 415, { error: "Content-Type must be application/json" });
+
+      const parsed = ExternalReportSchema.safeParse(await readJson(request, MAX_JSON_BODY_BYTES));
+      if (!parsed.success) return json(response, 400, { error: "Invalid report payload" });
+
+      const report = await createExternalReport(parsed.data, request.headers["idempotency-key"]);
+      await incrementMetric("external_api_report");
+      await notifyAdmin(`🆕 <b>Reporte externo insertado</b>
+
+${formatAdminPerson(report)}`, adminActionButtons(report.id));
+      return json(response, 201, { data: report });
+    }
+
     if (request.method === "POST" && url.pathname === "/api/ingest") {
       const limited = applyRateLimit(response, `admin:${clientKey}`, ADMIN_API_LIMIT.count, ADMIN_API_LIMIT.windowMs);
       if (limited) return;
@@ -154,6 +213,8 @@ const server = createServer(async (request, response) => {
 
     return json(response, 404, { error: "Not found" });
   } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) return json(response, 413, { error: "Request body too large" });
+    if (error instanceof InvalidJsonError) return json(response, 400, { error: "Invalid JSON" });
     console.error(error instanceof Error ? error.message : error);
     return json(response, 500, { error: "Internal error" });
   }
@@ -198,6 +259,62 @@ function validateBearer(header: string | undefined, expected: string | undefined
   if (!expected) return { status: 503, message: "INGEST_SECRET is not configured" };
   if (header !== `Bearer ${expected}`) return { status: 401, message: "Unauthorized" };
   return null;
+}
+
+function validateBearerSecure(header: string | undefined, expected: string | undefined, secretName: string) {
+  if (!expected) return { status: 503, message: `${secretName} is not configured` };
+  const prefix = "Bearer ";
+  if (!header?.startsWith(prefix)) return { status: 401, message: "Unauthorized" };
+  return timingSafeEqualString(header.slice(prefix.length), expected) ? null : { status: 401, message: "Unauthorized" };
+}
+
+function timingSafeEqualString(actual: string, expected: string) {
+  const actualBuffer = Buffer.from(actual);
+  const expectedBuffer = Buffer.from(expected);
+  return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
+}
+
+function isJsonRequest(request: IncomingMessage) {
+  const contentType = request.headers["content-type"];
+  return typeof contentType === "string" && contentType.toLowerCase().split(";")[0].trim() === "application/json";
+}
+
+function hashForRateLimit(value: string) {
+  return createHash("sha256").update(value).digest("hex").slice(0, 16);
+}
+
+async function createExternalReport(payload: z.infer<typeof ExternalReportSchema>, idempotencyKeyHeader: string | string[] | undefined) {
+  const idempotencyKey = typeof idempotencyKeyHeader === "string" ? idempotencyKeyHeader.trim().slice(0, 120) : "";
+  const stableHashInput = idempotencyKey || JSON.stringify({ fullName: payload.fullName, location: payload.location, sourceUrl: payload.sourceUrl ?? null });
+  const reportHash = createHash("sha256").update(stableHashInput).digest("hex");
+  const sourceUrl = payload.sourceUrl ?? `${publicBaseUrl()}/api/v1/found-people/reports/${reportHash.slice(0, 16)}`;
+  const relevantInfo = [
+    `Reporte externo — ubicación: ${payload.location}`,
+    payload.notes ? `nota: ${payload.notes}` : null,
+    payload.sourceUrl ? "fuente enviada por servicio externo" : "sin enlace externo",
+  ].filter(Boolean).join(" — ");
+
+  const [person] = await upsertPeople([{
+    fullName: payload.fullName,
+    relevantInfo,
+    sourceUrl,
+    status: "citizen_report",
+    sourceHash: `external-report:${reportHash}`,
+    raw: {
+      provider: "external_report_api",
+      location: payload.location,
+      notes: payload.notes ?? null,
+      reporter: payload.reporter ?? null,
+      submittedSourceUrl: payload.sourceUrl ?? null,
+      idempotencyKeyHash: idempotencyKey ? createHash("sha256").update(idempotencyKey).digest("hex") : null,
+    },
+  }]);
+
+  return person;
+}
+
+function publicBaseUrl() {
+  return (env.publicBaseUrl ?? `http://localhost:${env.port}`).replace(/\/$/, "");
 }
 
 async function handleTelegramUpdate(update: TelegramUpdate) {
@@ -739,16 +856,23 @@ async function telegram(method: string, body: Record<string, unknown>) {
   }
 }
 
+class RequestBodyTooLargeError extends Error {}
+class InvalidJsonError extends Error {}
+
 async function readJson(request: IncomingMessage, maxBytes: number) {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += buffer.byteLength;
-    if (size > maxBytes) throw new Error("Request body too large");
+    if (size > maxBytes) throw new RequestBodyTooLargeError("Request body too large");
     chunks.push(buffer);
   }
-  return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+  } catch {
+    throw new InvalidJsonError("Invalid JSON");
+  }
 }
 
 function applyRateLimit(response: ServerResponse, key: string, limit: number, windowMs: number) {
