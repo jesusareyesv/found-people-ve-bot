@@ -181,7 +181,6 @@ Eventos principales:
 
 ## Uso en Telegram
 
-- `/inicio` muestra opciones.
 - `/ayuda` muestra opciones y comandos principales.
 - `/buscar Nombre Apellido` busca por nombre.
 - `/lista` muestra la lista paginada.
@@ -192,18 +191,18 @@ Eventos principales:
 - Cualquier texto libre se interpreta como búsqueda por nombre.
 
 
-## Comandos admin
+## Admin commands
 
-Estos comandos solo funcionan desde `TELEGRAM_ADMIN_CHAT_ID`:
+These commands only work from `TELEGRAM_ADMIN_CHAT_ID`:
 
-- `/admin_stats` muestra totales por estado y métricas.
-- `/admin_recent [n] [status]` muestra últimos reportes ciudadanos, máximo 10.
-- `/admin_digest` muestra un resumen rápido.
-- `/admin_verify id` marca un registro como verificado.
-- `/admin_review id` marca un registro como por revisar.
-- `/admin_hide id` oculta un registro sin borrarlo.
-- `/admin_delete id-o-url` borra definitivamente por ID o URL de fuente.
-- `/admin_help` muestra la ayuda admin.
+- `/admin_stats` shows totals by status and metrics.
+- `/admin_recent [n] [status]` shows the latest citizen reports, max 10.
+- `/admin_digest` shows a quick digest.
+- `/admin_verify id` marks a record as verified.
+- `/admin_review id` marks a record as needs review.
+- `/admin_hide id` hides a record without deleting it.
+- `/admin_delete id-or-url` permanently deletes by ID or source URL.
+- `/admin_help` shows admin help.
 
 ## Configurar webhook
 

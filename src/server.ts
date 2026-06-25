@@ -394,9 +394,9 @@ async function handleTelegramUpdate(update: TelegramUpdate) {
   const pending = getPendingChatAction(message.chat.id);
   if (pending && !text.startsWith("/")) return handlePendingChatAction(message, text, pending);
 
-  if (isCommand(text, "start") || isCommand(text, "inicio") || isCommand(text, "ayuda")) {
+  if (isCommand(text, "start") || isCommand(text, "ayuda")) {
     pendingChatActions.delete(message.chat.id);
-    captureTelegramCommand(message, isCommand(text, "inicio") ? "inicio" : isCommand(text, "ayuda") ? "ayuda" : "start");
+    captureTelegramCommand(message, isCommand(text, "ayuda") ? "ayuda" : "start");
     return sendMenu(message.chat.id);
   }
   if (isCommand(text, "cancelar")) {
@@ -439,6 +439,8 @@ async function handleTelegramUpdate(update: TelegramUpdate) {
     if (!query) return askForSearch(message.chat.id);
     return sendSearchResults(message.chat.id, query, message);
   }
+
+  if (text.startsWith("/")) return sendMessage(message.chat.id, "No reconozco ese comando. Usa /ayuda para ver las opciones.");
 
   return sendSearchResults(message.chat.id, text, message);
 }
@@ -504,16 +506,16 @@ async function handleAdminCommand(message: NonNullable<TelegramUpdate["message"]
 
   if (text === "/admin_stats") {
     const stats = await getFoundPeopleStats();
-    return sendMessage(message.chat.id, `📊 <b>Estadísticas</b>
+    return sendMessage(message.chat.id, `📊 <b>Stats</b>
 
 Visible: ${stats.visible}
-Total en base: ${stats.total}
-Verificados: ${stats.verified}
-Reportes ciudadanos: ${stats.citizenReports}
-Por revisar: ${stats.needsReview}
-Ocultos: ${stats.removed}
+Total in database: ${stats.total}
+Verified: ${stats.verified}
+Citizen reports: ${stats.citizenReports}
+Needs review: ${stats.needsReview}
+Hidden: ${stats.removed}
 
-Métricas:
+Metrics:
 ${formatMetrics(stats.metrics)}`);
   }
 
@@ -522,42 +524,42 @@ ${formatMetrics(stats.metrics)}`);
     const limit = Math.min(Number(parts[0]) || 5, 10);
     const status = parseStatus(parts[1]);
     const reports = await listRecentCitizenReports(limit, status ?? undefined);
-    if (reports.length === 0) return sendMessage(message.chat.id, "No hay reportes ciudadanos recientes.");
-    return sendMessage(message.chat.id, formatAdminPeopleList(reports, `Últimos reportes ciudadanos (${reports.length})`));
+    if (reports.length === 0) return sendMessage(message.chat.id, "No recent citizen reports.");
+    return sendMessage(message.chat.id, formatAdminPeopleList(reports, `Latest citizen reports (${reports.length})`));
   }
 
   if (text.startsWith("/admin_digest")) {
     const stats = await getFoundPeopleStats();
     const reports = await listRecentCitizenReports(5);
-    return sendMessage(message.chat.id, `🧾 <b>Resumen admin</b>
+    return sendMessage(message.chat.id, `🧾 <b>Admin digest</b>
 
 Visible: ${stats.visible}
-Reportes ciudadanos: ${stats.citizenReports}
-Por revisar: ${stats.needsReview}
+Citizen reports: ${stats.citizenReports}
+Needs review: ${stats.needsReview}
 
-${reports.length ? formatAdminPeopleList(reports, "Últimos reportes") : "Sin reportes recientes."}`);
+${reports.length ? formatAdminPeopleList(reports, "Latest reports") : "No recent reports."}`);
   }
 
   if (text.startsWith("/admin_verify") || text.startsWith("/admin_review") || text.startsWith("/admin_hide")) {
     const [command, rawId] = text.split(/\s+/, 2);
-    if (!rawId) return sendMessage(message.chat.id, `Uso: ${command} id`);
+    if (!rawId) return sendMessage(message.chat.id, `Usage: ${command} id`);
     const status: RecordStatus = command === "/admin_verify" ? "verified" : command === "/admin_review" ? "needs_review" : "removed";
     const rows = await updatePersonStatus(resolvePersonId(rawId), status);
-    if (rows.length === 0) return sendMessage(message.chat.id, "No encontré ese registro.");
+    if (rows.length === 0) return sendMessage(message.chat.id, "Record not found.");
     await incrementMetric(`admin_${status}`);
-    return sendMessage(message.chat.id, `✅ Estado actualizado a <b>${escapeHtml(statusLabel(status))}</b>:
+    return sendMessage(message.chat.id, `✅ Status updated to <b>${escapeHtml(statusLabel(status))}</b>:
 
 ${formatAdminPerson(rows[0])}`);
   }
 
   if (text.startsWith("/admin_delete")) {
     const target = text.replace(/^\/admin_delete\s*/i, "").trim();
-    if (!target) return sendMessage(message.chat.id, "Uso: /admin_delete id-o-url");
+    if (!target) return sendMessage(message.chat.id, "Usage: /admin_delete id-or-url");
 
     const rows = isHttpUrl(target) ? await deletePersonBySourceUrl(target) : await deletePersonById(resolvePersonId(target));
-    if (rows.length === 0) return sendMessage(message.chat.id, "No encontré ese registro para borrar.");
+    if (rows.length === 0) return sendMessage(message.chat.id, "No matching record found to delete.");
     await incrementMetric("admin_delete");
-    return sendMessage(message.chat.id, `🗑️ Registro borrado definitivamente:
+    return sendMessage(message.chat.id, `🗑️ Record permanently deleted:
 
 ${formatAdminPerson(rows[0])}`);
   }
@@ -570,7 +572,7 @@ function isAdminChat(chatId: number) {
 }
 
 function adminHelpText() {
-  return "🔐 <b>Comandos admin</b>\n\n/admin_stats — métricas y totales\n/admin_recent [n] [status] — últimos reportes ciudadanos\n/admin_digest — resumen rápido\n/admin_verify id — marcar verificado\n/admin_review id — marcar por revisar\n/admin_hide id — ocultar sin borrar\n/admin_delete id-o-url — borrar definitivo\n/admin_help — ver esta ayuda";
+  return "🔐 <b>Admin commands</b>\n\n/admin_stats — metrics and totals\n/admin_recent [n] [status] — latest citizen reports\n/admin_digest — quick digest\n/admin_verify id — mark as verified\n/admin_review id — mark as needs review\n/admin_hide id — hide without deleting\n/admin_delete id-or-url — permanently delete\n/admin_help — show this help";
 }
 
 async function handleCallback(callback: NonNullable<TelegramUpdate["callback_query"]>) {
@@ -622,9 +624,26 @@ async function sendMenu(chatId: number) {
 }
 
 function menuText() {
-  return "🇻🇪 <b>Personas Encontradas VE</b>\n\nBusca personas encontradas/localizadas tras los terremotos del 24 de junio de 2026 en Venezuela.\n\nComandos principales:\n/buscar nombre — buscar por nombre\n/lista — ver lista\n/reportar — reportar una persona encontrada\n/fuentes — fuentes y limitaciones\n/sugerencia — enviar comentarios\n/cancelar — cancelar una operación\n\nTambién puedes escribir un nombre directamente.";
-}
+  return `🇻🇪 <b>Personas Encontradas VE</b>
 
+Este bot ayuda a consultar y reportar personas encontradas tras el terremoto en Venezuela.
+
+Reúne información de fuentes públicas, transcripciones de listas de atención médica y reportes ciudadanos para apoyar a familiares, voluntarios y comunidades durante la emergencia.
+
+Antes de tomar decisiones, verifica siempre la información con familiares, fuentes oficiales o contactos directos.
+
+<b>Cómo usarlo</b>
+• Escribe un nombre directamente para buscar.
+• /buscar nombre — buscar por nombre
+• /lista — ver lista de personas encontradas
+• /reportar — reportar una persona encontrada
+• /fuentes — fuentes y limitaciones
+• /sugerencia — enviar correcciones o comentarios
+• /cancelar — cancelar una operación
+
+Código fuente:
+https://github.com/edwinvrgs/found-people-ve-bot`;
+}
 function menuButtons(): InlineButton[][] {
   return [
     [button("🔎 Buscar", "search"), button("📋 Lista", "list:1")],
