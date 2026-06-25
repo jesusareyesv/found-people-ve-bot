@@ -1,20 +1,26 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { z } from "zod";
 import { deletePersonBySourceUrl, ensureSchema, listPeople, searchPeople, upsertPeople, type FoundPerson } from "./db.js";
+import { rateLimit, sweepRateLimitBuckets } from "./rate-limit.js";
+
+const MAX_JSON_BODY_BYTES = 256 * 1024;
+const PUBLIC_API_LIMIT = { count: 60, windowMs: 60_000 };
+const TELEGRAM_CHAT_LIMIT = { count: 20, windowMs: 60_000 };
+const ADMIN_API_LIMIT = { count: 20, windowMs: 60_000 };
 
 const PeopleQuerySchema = z.object({
-  page: z.coerce.number().int().min(1).default(1),
+  page: z.coerce.number().int().min(1).max(500).default(1),
   pageSize: z.coerce.number().int().min(1).max(10).default(5),
 });
 
 const SearchQuerySchema = PeopleQuerySchema.extend({
-  name: z.string().trim().min(2).max(120),
+  name: z.string().trim().min(2).max(80),
 });
 
 const PersonPayloadSchema = z.object({
   nombre_completo: z.string().trim().min(2).max(200),
   informacion_relevante: z.string().trim().max(5000).nullable().optional(),
-  fuente_url: z.string().url(),
+  fuente_url: z.string().url().refine((url) => /^https?:\/\//i.test(url), "Only http(s) URLs are allowed"),
   hash_fuente: z.string().trim().min(16).max(128).optional(),
   raw: z.record(z.string(), z.unknown()).optional(),
 });
@@ -24,7 +30,7 @@ const IngestSchema = z.object({
 });
 
 const DeletePersonSchema = z.object({
-  fuente_url: z.string().url(),
+  fuente_url: z.string().url().refine((url) => /^https?:\/\//i.test(url), "Only http(s) URLs are allowed"),
 });
 
 type TelegramUpdate = {
@@ -54,44 +60,61 @@ const env = {
 };
 
 await ensureSchema();
+setInterval(sweepRateLimitBuckets, 60_000).unref();
 
 const server = createServer(async (request, response) => {
   try {
+    response.setHeader("x-content-type-options", "nosniff");
+    response.setHeader("cache-control", "no-store");
+
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+    const clientKey = clientIp(request);
 
     if (request.method === "GET" && url.pathname === "/health") {
       return json(response, 200, { ok: true });
     }
 
     if (request.method === "GET" && url.pathname === "/api/people") {
+      const limited = applyRateLimit(response, `public:${clientKey}`, PUBLIC_API_LIMIT.count, PUBLIC_API_LIMIT.windowMs);
+      if (limited) return;
+
       const parsed = PeopleQuerySchema.safeParse(Object.fromEntries(url.searchParams));
-      if (!parsed.success) return json(response, 400, { error: "Invalid pagination", details: parsed.error.flatten() });
+      if (!parsed.success) return json(response, 400, { error: "Invalid pagination" });
       return json(response, 200, await listPeople(parsed.data.page, parsed.data.pageSize));
     }
 
     if (request.method === "GET" && url.pathname === "/api/search") {
+      const limited = applyRateLimit(response, `public:${clientKey}`, PUBLIC_API_LIMIT.count, PUBLIC_API_LIMIT.windowMs);
+      if (limited) return;
+
       const parsed = SearchQuerySchema.safeParse(Object.fromEntries(url.searchParams));
-      if (!parsed.success) return json(response, 400, { error: "Invalid search", details: parsed.error.flatten() });
+      if (!parsed.success) return json(response, 400, { error: "Invalid search" });
       return json(response, 200, await searchPeople(parsed.data.name, parsed.data.page, parsed.data.pageSize));
     }
 
     if (request.method === "POST" && url.pathname === "/api/ingest") {
+      const limited = applyRateLimit(response, `admin:${clientKey}`, ADMIN_API_LIMIT.count, ADMIN_API_LIMIT.windowMs);
+      if (limited) return;
+
       const authError = validateBearer(request.headers.authorization, env.ingestSecret);
       if (authError) return json(response, authError.status, { error: authError.message });
 
-      const parsed = IngestSchema.safeParse(await readJson(request));
-      if (!parsed.success) return json(response, 400, { error: "Invalid ingest payload", details: parsed.error.flatten() });
+      const parsed = IngestSchema.safeParse(await readJson(request, MAX_JSON_BODY_BYTES));
+      if (!parsed.success) return json(response, 400, { error: "Invalid ingest payload" });
 
       const rows = await upsertPeople(parsed.data.people);
       return json(response, 200, { upserted: rows.length, people: rows });
     }
 
     if (request.method === "DELETE" && url.pathname === "/api/people") {
+      const limited = applyRateLimit(response, `admin:${clientKey}`, ADMIN_API_LIMIT.count, ADMIN_API_LIMIT.windowMs);
+      if (limited) return;
+
       const authError = validateBearer(request.headers.authorization, env.ingestSecret);
       if (authError) return json(response, authError.status, { error: authError.message });
 
-      const parsed = DeletePersonSchema.safeParse(await readJson(request));
-      if (!parsed.success) return json(response, 400, { error: "Invalid delete payload", details: parsed.error.flatten() });
+      const parsed = DeletePersonSchema.safeParse(await readJson(request, MAX_JSON_BODY_BYTES));
+      if (!parsed.success) return json(response, 400, { error: "Invalid delete payload" });
 
       const rows = await deletePersonBySourceUrl(parsed.data.fuente_url);
       return json(response, 200, { deleted: rows.length, people: rows });
@@ -101,17 +124,21 @@ const server = createServer(async (request, response) => {
       const secretError = validateTelegramSecret(request.headers["x-telegram-bot-api-secret-token"]);
       if (secretError) return json(response, 401, { error: secretError });
 
-      const update = TelegramUpdateSchema.parse(await readJson(request));
+      const update = TelegramUpdateSchema.parse(await readJson(request, MAX_JSON_BODY_BYTES));
       await handleTelegramUpdate(update);
       return json(response, 200, { ok: true });
     }
 
     return json(response, 404, { error: "Not found" });
   } catch (error) {
-    console.error(error);
-    return json(response, 500, { error: error instanceof Error ? error.message : "Internal error" });
+    console.error(error instanceof Error ? error.message : error);
+    return json(response, 500, { error: "Internal error" });
   }
 });
+
+server.requestTimeout = 15_000;
+server.headersTimeout = 16_000;
+server.keepAliveTimeout = 5_000;
 
 server.listen(env.port, () => {
   console.log(`found-people-ve-bot listening on :${env.port}`);
@@ -120,11 +147,11 @@ server.listen(env.port, () => {
 const TelegramUpdateSchema = z.object({
   message: z.object({
     chat: z.object({ id: z.number() }),
-    text: z.string().optional(),
+    text: z.string().max(500).optional(),
   }).optional(),
   callback_query: z.object({
-    id: z.string(),
-    data: z.string().optional(),
+    id: z.string().max(120),
+    data: z.string().max(64).optional(),
     message: z.object({
       chat: z.object({ id: z.number() }),
       message_id: z.number(),
@@ -133,7 +160,7 @@ const TelegramUpdateSchema = z.object({
 });
 
 function validateTelegramSecret(header: string | string[] | undefined) {
-  if (!env.telegramWebhookSecret) return null;
+  if (!env.telegramWebhookSecret) return "Telegram webhook secret is not configured";
   return header === env.telegramWebhookSecret ? null : "Invalid Telegram webhook secret";
 }
 
@@ -148,6 +175,11 @@ async function handleTelegramUpdate(update: TelegramUpdate) {
 
   const message = update.message;
   if (!message?.text) return;
+
+  const limited = rateLimit(`chat:${message.chat.id}`, TELEGRAM_CHAT_LIMIT.count, TELEGRAM_CHAT_LIMIT.windowMs);
+  if (!limited.allowed) {
+    return sendMessage(message.chat.id, `Demasiadas consultas seguidas. Intenta de nuevo en ${limited.retryAfterSeconds}s.`);
+  }
 
   const text = message.text.trim();
   if (text === "/start" || text === "/help") return sendMenu(message.chat.id);
@@ -166,6 +198,9 @@ async function handleCallback(callback: NonNullable<TelegramUpdate["callback_que
   if (!callback.message) return answerCallback(callback.id);
 
   const chatId = callback.message.chat.id;
+  const limited = rateLimit(`chat:${chatId}`, TELEGRAM_CHAT_LIMIT.count, TELEGRAM_CHAT_LIMIT.windowMs);
+  if (!limited.allowed) return answerCallback(callback.id, `Intenta de nuevo en ${limited.retryAfterSeconds}s.`);
+
   const messageId = callback.message.message_id;
   const data = callback.data ?? "";
 
@@ -215,10 +250,13 @@ async function sendPeoplePage(chatId: number, page: number, messageId?: number) 
 }
 
 async function sendSearchResults(chatId: number, query: string) {
-  const result = await searchPeople(query, 1, 5);
+  const parsed = SearchQuerySchema.shape.name.safeParse(query);
+  if (!parsed.success) return sendMessage(chatId, "Escribe al menos 2 caracteres y máximo 80 para buscar.");
+
+  const result = await searchPeople(parsed.data, 1, 5);
   const text = result.total === 0
-    ? `No encontré resultados para “${query}”.\n\nPrueba con menos palabras o revisa la lista completa.`
-    : formatPeopleList(result.items, `Resultados para “${query}”`, result.total);
+    ? `No encontré resultados para “${parsed.data}”.\n\nPrueba con menos palabras o revisa la lista completa.`
+    : formatPeopleList(result.items, `Resultados para “${parsed.data}”`, result.total);
 
   return sendMessage(chatId, text, [
     ...sourceButtons(result.items),
@@ -234,7 +272,7 @@ function formatPeopleList(items: FoundPerson[], title: string, total: number) {
     person.informacion_relevante ? truncate(person.informacion_relevante, 260) : null,
   ].filter(Boolean).join("\n"));
 
-  return `${title}\nTotal: ${total}\n\n${lines.join("\n\n")}`;
+  return truncate(`${title}\nTotal: ${total}\n\n${lines.join("\n\n")}`, 3500);
 }
 
 function sourceButtons(items: FoundPerson[]): InlineButton[][] {
@@ -279,25 +317,52 @@ async function editMessage(chatId: number, messageId: number, text: string, inli
   });
 }
 
-async function answerCallback(callbackQueryId: string) {
-  return telegram("answerCallbackQuery", { callback_query_id: callbackQueryId });
+async function answerCallback(callbackQueryId: string, text?: string) {
+  return telegram("answerCallbackQuery", { callback_query_id: callbackQueryId, text });
 }
 
 async function telegram(method: string, body: Record<string, unknown>) {
   if (!env.telegramToken) throw new Error("TELEGRAM_BOT_TOKEN is required for Telegram actions");
-  const response = await fetch(`https://api.telegram.org/bot${env.telegramToken}/${method}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) throw new Error(`Telegram ${method} failed with ${response.status}: ${await response.text()}`);
-  return response.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${env.telegramToken}/${method}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`Telegram ${method} failed with ${response.status}`);
+    return response.json();
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
-async function readJson(request: IncomingMessage) {
+async function readJson(request: IncomingMessage, maxBytes: number) {
   const chunks: Buffer[] = [];
-  for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  let size = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.byteLength;
+    if (size > maxBytes) throw new Error("Request body too large");
+    chunks.push(buffer);
+  }
   return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+}
+
+function applyRateLimit(response: ServerResponse, key: string, limit: number, windowMs: number) {
+  const limited = rateLimit(key, limit, windowMs);
+  if (limited.allowed) return false;
+  response.setHeader("retry-after", String(limited.retryAfterSeconds));
+  json(response, 429, { error: "Too many requests", retryAfterSeconds: limited.retryAfterSeconds });
+  return true;
+}
+
+function clientIp(request: IncomingMessage) {
+  const forwarded = request.headers["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded) return forwarded.split(",")[0].trim();
+  return request.socket.remoteAddress ?? "unknown";
 }
 
 function json(response: ServerResponse, status: number, body: unknown) {

@@ -68,3 +68,13 @@ curl -X DELETE "$PUBLIC_BASE_URL/api/people" \
   -H "Content-Type: application/json" \
   -d '{"fuente_url":"https://example.com/fuente"}'
 ```
+
+## Seguridad y límites
+
+- `TELEGRAM_WEBHOOK_SECRET` debe estar configurado antes de exponer el webhook.
+- `POST /api/ingest` y `DELETE /api/people` requieren `Authorization: Bearer $INGEST_SECRET`.
+- Endpoints públicos y webhook tienen rate limit en memoria.
+- `pageSize` máximo: 10.
+- `page` máximo: 500.
+- Body JSON máximo: 256 KB.
+- Pool Postgres por defecto: `PG_POOL_MAX=5`.

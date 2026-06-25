@@ -11,6 +11,9 @@ export type FoundPerson = {
 
 export const pool = new Pool({
   connectionString: requiredEnv("DATABASE_URL"),
+  max: Number(process.env.PG_POOL_MAX ?? 5),
+  connectionTimeoutMillis: 5_000,
+  idleTimeoutMillis: 30_000,
   ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : undefined,
 });
 
@@ -22,6 +25,8 @@ export function requiredEnv(name: string) {
 
 export async function ensureSchema() {
   await pool.query(`
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
     CREATE TABLE IF NOT EXISTS found_people (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       nombre_completo TEXT NOT NULL,
@@ -35,6 +40,9 @@ export async function ensureSchema() {
 
     CREATE INDEX IF NOT EXISTS idx_found_people_nombre
       ON found_people (lower(nombre_completo));
+
+    CREATE INDEX IF NOT EXISTS idx_found_people_nombre_trgm
+      ON found_people USING gin (nombre_completo gin_trgm_ops);
 
     CREATE INDEX IF NOT EXISTS idx_found_people_updated_at
       ON found_people (updated_at DESC);
