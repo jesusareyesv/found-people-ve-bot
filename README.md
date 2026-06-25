@@ -32,6 +32,7 @@ DATABASE_URL=
 INGEST_SECRET=
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_WEBHOOK_SECRET=
+TELEGRAM_ADMIN_CHAT_ID=
 PUBLIC_BASE_URL=
 ```
 
@@ -57,8 +58,10 @@ curl -X POST "$PUBLIC_BASE_URL/api/ingest" \
 ## Uso en Telegram
 
 - `/start` muestra opciones.
-- `/lista` muestra la lista paginada.
-- `/buscar Nombre Apellido` busca por nombre.
+- `/list` muestra la lista paginada. `/lista` también funciona.
+- `/search Nombre Apellido` busca por nombre. `/buscar` también funciona.
+- `/feedback mensaje` envía sugerencias al administrador.
+- `/report Nombre Apellido | Ubicación | enlace opcional` inserta un reporte ciudadano directamente en la base del bot y notifica al administrador.
 - Cualquier texto libre se interpreta como búsqueda por nombre.
 
 ## Configurar webhook

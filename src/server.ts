@@ -33,9 +33,18 @@ const DeletePersonSchema = z.object({
   sourceUrl: z.string().url().refine((url) => /^https?:\/\//i.test(url), "Only http(s) URLs are allowed"),
 });
 
+type TelegramUser = {
+  id: number;
+  username?: string;
+  first_name?: string;
+  last_name?: string;
+};
+
 type TelegramUpdate = {
   message?: {
+    message_id: number;
     chat: { id: number };
+    from?: TelegramUser;
     text?: string;
   };
   callback_query?: {
@@ -57,6 +66,7 @@ const env = {
   telegramToken: process.env.TELEGRAM_BOT_TOKEN,
   telegramWebhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET,
   ingestSecret: process.env.INGEST_SECRET,
+  adminChatId: process.env.TELEGRAM_ADMIN_CHAT_ID ? Number(process.env.TELEGRAM_ADMIN_CHAT_ID) : null,
 };
 
 await ensureSchema();
@@ -146,8 +156,15 @@ server.listen(env.port, () => {
 
 const TelegramUpdateSchema = z.object({
   message: z.object({
+    message_id: z.number(),
     chat: z.object({ id: z.number() }),
-    text: z.string().max(500).optional(),
+    from: z.object({
+      id: z.number(),
+      username: z.string().max(64).optional(),
+      first_name: z.string().max(128).optional(),
+      last_name: z.string().max(128).optional(),
+    }).optional(),
+    text: z.string().max(1500).optional(),
   }).optional(),
   callback_query: z.object({
     id: z.string().max(120),
@@ -184,6 +201,14 @@ async function handleTelegramUpdate(update: TelegramUpdate) {
   const text = message.text.trim();
   if (text === "/start" || text === "/help") return sendMenu(message.chat.id);
   if (text === "/list" || text === "/lista") return sendPeoplePage(message.chat.id, 1);
+
+  if (text.startsWith("/feedback") || text.startsWith("/suggest")) {
+    return handleFeedbackCommand(message, text);
+  }
+
+  if (text.startsWith("/report")) {
+    return handleReportCommand(message, text);
+  }
 
   if (text.startsWith("/search") || text.startsWith("/buscar")) {
     const query = text.replace(/^\/(?:search|buscar)\s*/i, "").trim();
@@ -242,6 +267,50 @@ async function askForSearch(chatId: number) {
   return sendMessage(chatId, "Escribe el nombre o nombre y apellido.\n\nEjemplo: /search Maria Perez", [[button("📋 Ver lista", "list:1")]]);
 }
 
+async function handleFeedbackCommand(message: NonNullable<TelegramUpdate["message"]>, text: string) {
+  const feedback = text.replace(/^\/(?:feedback|suggest)\s*/i, "").trim();
+  if (feedback.length < 3) {
+    return sendMessage(message.chat.id, "Envíame tu sugerencia así:\n\n/feedback Escribe aquí tu mensaje");
+  }
+
+  await notifyAdmin(`💬 <b>Feedback recibido</b>\n\n${formatReporter(message)}\n\n<b>Mensaje:</b>\n${escapeHtml(feedback)}`);
+  return sendMessage(message.chat.id, "Gracias. Recibí tu sugerencia y se la envié al equipo.");
+}
+
+async function handleReportCommand(message: NonNullable<TelegramUpdate["message"]>, text: string) {
+  const payload = text.replace(/^\/report\s*/i, "").trim();
+  const parts = payload.split("|").map((part) => part.trim()).filter(Boolean);
+  const [fullName, location, submittedSourceUrl] = parts;
+
+  if (!fullName || !location || fullName.length < 4 || location.length < 2) {
+    return sendMessage(
+      message.chat.id,
+      "Para reportar una persona encontrada, usa este formato:\n\n/report Nombre Apellido | Ubicación | enlace opcional\n\nEjemplo:\n/report Maria Perez | Refugio La Carlota | https://ejemplo.com/fuente",
+    );
+  }
+
+  const sourceUrl = normalizeOptionalSourceUrl(submittedSourceUrl) ?? fallbackReportSourceUrl(message);
+  const relevantInfo = `Reporte ciudadano — ubicación: ${location}${submittedSourceUrl ? " — fuente enviada por usuario" : " — sin enlace externo"}`;
+  const [person] = await upsertPeople([{
+    fullName,
+    relevantInfo,
+    sourceUrl,
+    sourceHash: `telegram-report:${message.chat.id}:${message.message_id}`,
+    raw: {
+      provider: "telegram_report",
+      location,
+      submittedSourceUrl: submittedSourceUrl ?? null,
+      reporter: reporterRaw(message),
+      messageId: message.message_id,
+      chatId: message.chat.id,
+    },
+  }]);
+
+  await notifyAdmin(`🆕 <b>Reporte ciudadano insertado</b>\n\n${formatReporter(message)}\n\n<b>Persona:</b> ${escapeHtml(fullName)}\n<b>Ubicación:</b> ${escapeHtml(location)}\n<b>Fuente:</b> <a href="${escapeHtmlAttribute(sourceUrl)}">abrir enlace</a>\n<b>ID:</b> ${escapeHtml(person.id)}`);
+
+  return sendMessage(message.chat.id, `Gracias. Agregué el reporte de <b>${escapeHtml(fullName)}</b> a la lista.\n\nSi tienes una fuente verificable, también puedes reenviar el reporte con el enlace.`);
+}
+
 async function sendPeoplePage(chatId: number, page: number, messageId?: number) {
   const result = await listPeople(page, 5);
   const text = formatPeopleList(result.items, `Personas encontradas (${result.page}/${result.totalPages})`, result.total);
@@ -261,6 +330,42 @@ async function sendSearchResults(chatId: number, query: string) {
   return sendMessage(chatId, text, [
     [button("🔎 Buscar otro nombre", "search"), button("📋 Ver lista", "list:1")],
   ]);
+}
+
+function normalizeOptionalSourceUrl(value: string | undefined) {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function fallbackReportSourceUrl(message: NonNullable<TelegramUpdate["message"]>) {
+  return `https://t.me/encontrados_ve_bot?start=report_${message.chat.id}_${message.message_id}`;
+}
+
+function reporterRaw(message: NonNullable<TelegramUpdate["message"]>) {
+  return {
+    id: message.from?.id ?? null,
+    username: message.from?.username ?? null,
+    firstName: message.from?.first_name ?? null,
+    lastName: message.from?.last_name ?? null,
+  };
+}
+
+function formatReporter(message: NonNullable<TelegramUpdate["message"]>) {
+  const user = message.from;
+  const displayName = [user?.first_name, user?.last_name].filter(Boolean).join(" ") || "Usuario sin nombre";
+  const username = user?.username ? `@${user.username}` : "sin username";
+  return `<b>Usuario:</b> ${escapeHtml(displayName)} (${escapeHtml(username)})\n<b>User ID:</b> ${escapeHtml(String(user?.id ?? "desconocido"))}\n<b>Chat ID:</b> ${escapeHtml(String(message.chat.id))}`;
+}
+
+async function notifyAdmin(text: string) {
+  if (!env.adminChatId) return;
+  await sendMessage(env.adminChatId, text);
 }
 
 function formatPeopleList(items: FoundPerson[], title: string, total: number) {
