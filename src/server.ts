@@ -87,6 +87,7 @@ const env = {
 };
 
 type PendingChatAction =
+  | { kind: "search"; expiresAt: number }
   | { kind: "feedback"; expiresAt: number }
   | { kind: "report_name"; draft: Partial<ReportDraft>; expiresAt: number }
   | { kind: "report_location"; draft: Partial<ReportDraft>; expiresAt: number }
@@ -350,8 +351,16 @@ function captureTelegramCommand(message: NonNullable<TelegramUpdate["message"]>,
 }
 
 function commandName(text: string) {
-  const match = text.match(/^\/([a-zA-Z_]+)/);
+  const match = text.match(/^\/([a-zA-Z_]+)(?:@[A-Za-z0-9_]+)?(?:\s|$)/);
   return match?.[1]?.toLowerCase() ?? null;
+}
+
+function isCommand(text: string, command: string) {
+  return new RegExp(`^/${command}(?:@[A-Za-z0-9_]+)?(?:\\s|$)`, "i").test(text);
+}
+
+function commandPayload(text: string) {
+  return text.replace(/^\/[a-zA-Z_]+(?:@[A-Za-z0-9_]+)?\s*/i, "").trim();
 }
 
 function lengthBucket(length: number) {
@@ -385,11 +394,11 @@ async function handleTelegramUpdate(update: TelegramUpdate) {
   const pending = getPendingChatAction(message.chat.id);
   if (pending && !text.startsWith("/")) return handlePendingChatAction(message, text, pending);
 
-  if (text === "/start" || text === "/help") {
-    captureTelegramCommand(message, text === "/start" ? "start" : "help");
+  if (isCommand(text, "start") || isCommand(text, "help")) {
+    captureTelegramCommand(message, isCommand(text, "start") ? "start" : "help");
     return sendMenu(message.chat.id);
   }
-  if (text === "/cancel") {
+  if (isCommand(text, "cancel")) {
     captureTelegramCommand(message, "cancel");
     return cancelPendingAction(message.chat.id);
   }
@@ -402,24 +411,24 @@ async function handleTelegramUpdate(update: TelegramUpdate) {
     return handleAdminCommand(message, text);
   }
 
-  if (text === "/list" || text === "/lista") {
+  if (isCommand(text, "list") || isCommand(text, "lista")) {
     await incrementMetric("telegram_list");
     captureTelegramCommand(message, "list");
     return sendPeoplePage(message.chat.id, 1);
   }
 
-  if (text.startsWith("/feedback") || text.startsWith("/suggest")) {
+  if (isCommand(text, "feedback") || isCommand(text, "suggest")) {
     captureTelegramCommand(message, "feedback");
     return handleFeedbackCommand(message, text);
   }
 
-  if (text.startsWith("/report")) {
+  if (isCommand(text, "report")) {
     captureTelegramCommand(message, "report");
     return handleReportCommand(message, text);
   }
 
-  if (text.startsWith("/search") || text.startsWith("/buscar")) {
-    const query = text.replace(/^\/(?:search|buscar)\s*/i, "").trim();
+  if (isCommand(text, "search") || isCommand(text, "buscar")) {
+    const query = commandPayload(text);
     captureTelegramCommand(message, "search", { hasQuery: Boolean(query) });
     if (!query) return askForSearch(message.chat.id);
     return sendSearchResults(message.chat.id, query, message);
@@ -451,6 +460,11 @@ async function handlePendingChatAction(message: NonNullable<TelegramUpdate["mess
   if (text.toLowerCase() === "cancelar" || text.toLowerCase() === "/cancel") return cancelPendingAction(message.chat.id);
 
   capture(telegramEvent("pending_action_step", message.chat.id), telegramDistinctId(message.chat.id, message.from?.id), { kind: pending.kind, textLengthBucket: lengthBucket(text.length) });
+
+  if (pending.kind === "search") {
+    pendingChatActions.delete(message.chat.id);
+    return sendSearchResults(message.chat.id, text.trim(), message);
+  }
 
   if (pending.kind === "feedback") {
     pendingChatActions.delete(message.chat.id);
@@ -573,6 +587,7 @@ async function handleCallback(callback: NonNullable<TelegramUpdate["callback_que
 
   if (data === "search") {
     await answerCallback(callback.id);
+    setPendingChatAction(chatId, { kind: "search" });
     return editMessage(chatId, messageId, "Escribe el nombre o nombre y apellido que quieres buscar.\n\nEjemplo: Maria Perez", [[button("📋 Ver lista", "list:1")]]);
   }
 
@@ -611,7 +626,8 @@ function menuButtons(): InlineButton[][] {
 }
 
 async function askForSearch(chatId: number) {
-  return sendMessage(chatId, "Escribe el nombre o nombre y apellido.\n\nEjemplo: /search Maria Perez", [[button("📋 Ver lista", "list:1")]]);
+  setPendingChatAction(chatId, { kind: "search" });
+  return sendMessage(chatId, "Escribe el nombre o nombre y apellido.\n\nEjemplo: Maria Perez", [[button("📋 Ver lista", "list:1")]]);
 }
 
 async function handleSourceCommand(message: NonNullable<TelegramUpdate["message"]>, text: string) {
@@ -639,7 +655,7 @@ Si ves un error, escribe /feedback para reportarlo.`;
 }
 
 async function handleFeedbackCommand(message: NonNullable<TelegramUpdate["message"]>, text: string) {
-  const feedback = text.replace(/^\/(?:feedback|suggest)\s*/i, "").trim();
+  const feedback = commandPayload(text);
   if (!feedback) {
     setPendingChatAction(message.chat.id, { kind: "feedback" });
     return sendMessage(message.chat.id, "Claro. Escríbeme tu sugerencia en el próximo mensaje.");
@@ -664,7 +680,7 @@ ${escapeHtml(feedback)}`);
 }
 
 async function handleReportCommand(message: NonNullable<TelegramUpdate["message"]>, text: string) {
-  const payload = text.replace(/^\/report\s*/i, "").trim();
+  const payload = commandPayload(text);
   if (payload) return submitReport(message, parseReportPayload(payload));
   setPendingChatAction(message.chat.id, { kind: "report_name", draft: {} });
   return sendMessage(message.chat.id, "Vamos a agregar un reporte ciudadano.\n\n¿Cuál es el <b>nombre y apellido</b> de la persona encontrada?\n\nPuedes escribir /cancel para cancelar.");
