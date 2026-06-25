@@ -60,8 +60,10 @@ curl -X POST "$PUBLIC_BASE_URL/api/ingest" \
 - `/start` muestra opciones.
 - `/list` muestra la lista paginada. `/lista` también funciona.
 - `/search Nombre Apellido` busca por nombre. `/buscar` también funciona.
-- `/feedback mensaje` envía sugerencias al administrador.
-- `/report Nombre Apellido | Ubicación | enlace opcional` inserta un reporte ciudadano directamente en la base del bot y notifica al administrador.
+- `/feedback` inicia un flujo para enviar sugerencias al administrador. También acepta `/feedback mensaje`.
+- `/report` inicia un flujo guiado para reportar una persona encontrada. También acepta `/report Nombre Apellido | Ubicación | enlace opcional`.
+- `/source` explica de dónde salen los datos y sus limitaciones.
+- `/cancel` cancela una operación pendiente.
 - Cualquier texto libre se interpreta como búsqueda por nombre.
 
 
@@ -69,9 +71,13 @@ curl -X POST "$PUBLIC_BASE_URL/api/ingest" \
 
 Estos comandos solo funcionan desde `TELEGRAM_ADMIN_CHAT_ID`:
 
-- `/admin_stats` muestra total de registros y reportes ciudadanos.
-- `/admin_recent [n]` muestra los últimos reportes ciudadanos, máximo 10.
-- `/admin_delete id-o-url` borra un registro por ID o por URL de fuente.
+- `/admin_stats` muestra totales por estado y métricas.
+- `/admin_recent [n] [status]` muestra últimos reportes ciudadanos, máximo 10.
+- `/admin_digest` muestra un resumen rápido.
+- `/admin_verify id` marca un registro como verificado.
+- `/admin_review id` marca un registro como por revisar.
+- `/admin_hide id` oculta un registro sin borrarlo.
+- `/admin_delete id-o-url` borra definitivamente por ID o URL de fuente.
 - `/admin_help` muestra la ayuda admin.
 
 ## Configurar webhook
