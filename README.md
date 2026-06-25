@@ -6,6 +6,8 @@ El bot muestra resultados obtenidos de fuentes públicas y listados OCR revisabl
 
 Bot público: https://t.me/encontrados_ve_bot
 
+Fuente OCR principal: https://github.com/ecrespo/OCR-data_Terremoto_Venezuela_24062026
+
 
 Bot de Telegram para consultar personas encontradas/localizadas en Venezuela.
 
