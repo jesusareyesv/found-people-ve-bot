@@ -1,11 +1,21 @@
-# Found Persons Telegram Bot
+# found-people-ve-bot
 
-Backend standalone para Railway. Consulta `personas_encontradas` en Supabase y expone:
+Bot de Telegram para consultar personas encontradas/localizadas en Venezuela.
 
-- `GET /health`
-- `GET /api/search?name=...`
-- `GET /api/people?page=1&pageSize=5`
-- `POST /telegram/webhook`
+Consulta la tabla `personas_encontradas` en Supabase y expone endpoints separados para:
+
+- búsqueda por nombre
+- lista paginada en orden alfabético
+- webhook de Telegram con botones inline
+
+## Endpoints
+
+```txt
+GET /health
+GET /api/search?name=Maria&page=1&pageSize=5
+GET /api/people?page=1&pageSize=5
+POST /telegram/webhook
+```
 
 ## Variables
 
@@ -27,8 +37,6 @@ npm run dev
 
 ## Railway
 
-Configurar root directory: `apps/found-persons-telegram-bot`.
-
 Build command:
 
 ```bash
@@ -41,10 +49,17 @@ Start command:
 npm start
 ```
 
-Webhook:
+## Configurar webhook
 
 ```bash
 curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
   -d "url=$PUBLIC_BASE_URL/telegram/webhook" \
   -d "secret_token=$TELEGRAM_WEBHOOK_SECRET"
 ```
+
+## Uso en Telegram
+
+- `/start` muestra opciones.
+- `/lista` muestra la lista paginada.
+- `/buscar Nombre Apellido` busca por nombre.
+- Cualquier texto libre se interpreta como búsqueda por nombre.
