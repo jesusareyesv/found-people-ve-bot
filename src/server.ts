@@ -635,7 +635,6 @@ ${formatAdminPerson(rows[0])}`) : undefined;
 
   const listMatch = data.match(/^list:(\d+)$/);
   if (listMatch) {
-    capture(telegramEvent("callback_clicked", chatId), telegramDistinctId(chatId, callback.from), { action: "list_page", page: Number(listMatch[1]) });
     await answerCallback(callback.id);
     return sendPeoplePage(chatId, Number(listMatch[1]), messageId, callback.from);
   }

@@ -175,7 +175,6 @@ Eventos de Telegram:
 - `list_viewed`: lista vista; incluye página y conteos.
 - `citizen_report_created`: reporte ciudadano creado desde Telegram; solo flags/buckets, sin nombre, ubicación ni fuente.
 - `feedback_submitted`: feedback enviado; solo bucket de longitud, no el contenido.
-- `callback_clicked`: botón/callback usado; por ahora navegación de lista.
 - `rate_limited`: rate limit aplicado en mensaje o callback.
 
 Eventos de API externa:
