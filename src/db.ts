@@ -41,6 +41,7 @@ export async function ensureSchema() {
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       full_name TEXT NOT NULL,
       relevant_info TEXT,
+      document_id TEXT,
       source_url TEXT NOT NULL CHECK (source_url ~* '^https?://'),
       source_hash TEXT UNIQUE NOT NULL,
       status TEXT NOT NULL DEFAULT 'verified',
@@ -73,7 +74,8 @@ export async function ensureSchema() {
     END $$;
 
     ALTER TABLE found_people
-      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'verified';
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'verified',
+      ADD COLUMN IF NOT EXISTS document_id TEXT;
 
     UPDATE found_people
     SET status = 'citizen_report'
@@ -94,11 +96,15 @@ export async function ensureSchema() {
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'found_people_status_check') THEN
         ALTER TABLE found_people ADD CONSTRAINT found_people_status_check CHECK (status IN ('verified', 'citizen_report', 'needs_review', 'removed'));
       END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'found_people_document_id_check') THEN
+        ALTER TABLE found_people ADD CONSTRAINT found_people_document_id_check CHECK (document_id IS NULL OR document_id ~ '^\\d{6,9}$');
+      END IF;
     END $$;
 
     CREATE INDEX IF NOT EXISTS idx_found_people_full_name ON found_people (lower(full_name));
     CREATE INDEX IF NOT EXISTS idx_found_people_full_name_trgm ON found_people USING gin (full_name gin_trgm_ops);
     -- Keep trigram on raw name. Search uses unaccent() for recall; table is small enough for now.
+    CREATE INDEX IF NOT EXISTS idx_found_people_document_id ON found_people (document_id) WHERE document_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_found_people_status ON found_people (status);
     CREATE INDEX IF NOT EXISTS idx_found_people_updated_at ON found_people (updated_at DESC);
 
@@ -155,25 +161,18 @@ function normalizeDocumentDigits(value: string) {
   return digits.length >= 5 ? digits : null;
 }
 
+function normalizeDocumentId(value: string | null | undefined) {
+  const digits = (value ?? "").replace(/\D/g, "");
+  return digits.length >= 6 && digits.length <= 9 ? digits : null;
+}
+
 function searchWhereClause() {
   return `status <> 'removed'
     AND (
       unaccent(lower(full_name)) ILIKE unaccent(lower($1))
       OR (
         $2::text IS NOT NULL
-        AND regexp_replace(concat_ws(' ',
-          full_name,
-          relevant_info,
-          raw->>'cedula',
-          raw->>'cédula',
-          raw->>'cedulaIdentidad',
-          raw->>'documento',
-          raw->>'document',
-          raw->>'documentId',
-          raw->>'idNumber',
-          raw->>'id_number',
-          raw->>'dni'
-        ), '\\D', '', 'g') LIKE $2
+        AND document_id LIKE $2
       )
     )`;
 }
@@ -184,6 +183,7 @@ export async function upsertPeople(people: Array<{
   sourceUrl: string;
   sourceHash?: string;
   status?: RecordStatus;
+  documentId?: string | null;
   raw?: Record<string, unknown>;
 }>) {
   const rows: FoundPerson[] = [];
@@ -191,18 +191,20 @@ export async function upsertPeople(people: Array<{
   for (const person of people) {
     const hash = person.sourceHash ?? await sha256(`${person.sourceUrl}:${person.fullName}`);
     const status = person.status ?? "verified";
+    const documentId = normalizeDocumentId(person.documentId);
     const result = await pool.query<FoundPerson>(
-      `INSERT INTO found_people (full_name, relevant_info, source_url, source_hash, status, raw)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+      `INSERT INTO found_people (full_name, relevant_info, document_id, source_url, source_hash, status, raw)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
        ON CONFLICT (source_hash) DO UPDATE SET
          full_name = EXCLUDED.full_name,
          relevant_info = EXCLUDED.relevant_info,
+         document_id = COALESCE(EXCLUDED.document_id, found_people.document_id),
          source_url = EXCLUDED.source_url,
          status = CASE WHEN found_people.status = 'removed' THEN found_people.status ELSE EXCLUDED.status END,
          raw = EXCLUDED.raw,
          updated_at = now()
        RETURNING ${returningColumns()}`,
-      [person.fullName, person.relevantInfo ?? null, person.sourceUrl, hash, status, JSON.stringify(person.raw ?? {})],
+      [person.fullName, person.relevantInfo ?? null, documentId, person.sourceUrl, hash, status, JSON.stringify(person.raw ?? {})],
     );
     rows.push(result.rows[0]);
   }

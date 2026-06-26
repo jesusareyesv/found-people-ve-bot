@@ -25,6 +25,7 @@ const PersonPayloadSchema = z.object({
   relevantInfo: z.string().trim().max(5000).nullable().optional(),
   sourceUrl: z.string().url().refine((url) => /^https?:\/\//i.test(url), "Only http(s) URLs are allowed"),
   sourceHash: z.string().trim().min(16).max(128).optional(),
+  documentId: z.string().trim().regex(/^\d{6,9}$/).nullable().optional(),
   raw: z.record(z.string(), z.unknown()).optional(),
 });
 

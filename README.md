@@ -128,6 +128,8 @@ Applied safeguards:
 
 `POST /api/ingest` upserts records by `sourceHash`. If `sourceHash` is omitted, the backend generates one from `sourceUrl:fullName`.
 
+Optional `documentId` stores a Venezuelan ID number as normalized digits for private exact/partial search. It is not returned by the public listing/search API; public text should only include masked document references such as `cédula terminada en 1234`.
+
 ```bash
 curl -X POST "$PUBLIC_BASE_URL/api/ingest" \
   -H "Authorization: Bearer $INGEST_SECRET" \
@@ -137,6 +139,7 @@ curl -X POST "$PUBLIC_BASE_URL/api/ingest" \
       {
         "fullName": "Maria Perez",
         "relevantInfo": "Found at La Carlota shelter",
+        "documentId": "12345678",
         "sourceUrl": "https://example.com/source"
       }
     ]
