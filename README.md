@@ -1,17 +1,14 @@
-# Personas Encontradas VE Bot
+# Found People Venezuela Bot
 
-Bot de Telegram para ayudar a consultar personas encontradas/localizadas tras la tragedia de los terremotos ocurridos el 24 de junio de 2026 en Venezuela.
+Telegram bot and public API for consulting and reporting people found or located after the June 24, 2026 earthquakes in Venezuela.
 
-El bot muestra resultados obtenidos de fuentes públicas, reportes ciudadanos y transcripciones de listas manuscritas de pacientes atendidos en centros médicos tras el terremoto. Cada resultado incluye un enlace a la fuente para que familiares, voluntarios y colaboradores puedan verificar la información.
+The bot shows records collected from public sources, citizen reports, and transcriptions of handwritten medical-attention lists. Each result includes a source link so relatives, volunteers, and community members can verify the information before taking action.
 
-Bot público: https://t.me/encontrados_ve_bot
+Public bot: https://t.me/encontrados_ve_bot
 
-Fuente principal de transcripciones médicas: https://github.com/ecrespo/OCR-data_Terremoto_Venezuela_24062026
+Main medical-transcription source: https://github.com/ecrespo/OCR-data_Terremoto_Venezuela_24062026
 
-
-Bot de Telegram para consultar personas encontradas/localizadas en Venezuela.
-
-El servicio vive en Railway y usa Railway Postgres como base de datos propia.
+The service runs on Railway and uses Railway Postgres as its database.
 
 ## Endpoints
 
@@ -26,27 +23,28 @@ DELETE /api/people
 POST /telegram/webhook
 ```
 
-## Variables
+## Environment variables
 
 ```env
 PORT=3000
 DATABASE_URL=
 INGEST_SECRET=
+EXTERNAL_API_SECRET=
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_WEBHOOK_SECRET=
 TELEGRAM_ADMIN_CHAT_ID=
 PUBLIC_BASE_URL=
 ```
 
-## API externa v1
+## External API v1
 
-### Listar personas encontradas
+### List found people
 
 ```http
 GET /api/v1/found-people?page=1&pageSize=10
 ```
 
-Respuesta:
+Response:
 
 ```json
 {
@@ -54,8 +52,8 @@ Respuesta:
     {
       "id": "uuid",
       "fullName": "Maria Perez",
-      "relevantInfo": "Hospital / refugio / nota pública",
-      "sourceUrl": "https://example.com/fuente",
+      "relevantInfo": "Hospital / shelter / public note",
+      "sourceUrl": "https://example.com/source",
       "status": "verified"
     }
   ],
@@ -68,14 +66,14 @@ Respuesta:
 }
 ```
 
-Notas de seguridad:
+Security notes:
 
-- Solo devuelve registros visibles; registros `removed` quedan excluidos.
-- `page` máximo: 500.
-- `pageSize` máximo: 10.
-- Tiene rate limit por IP.
+- Only visible records are returned; records marked as `removed` are excluded.
+- Maximum `page`: 500.
+- Maximum `pageSize`: 10.
+- Rate-limited by IP.
 
-### Reportar una persona encontrada
+### Report a found person
 
 ```http
 POST /api/v1/found-people/reports
@@ -89,46 +87,46 @@ Payload:
 ```json
 {
   "fullName": "Maria Perez",
-  "location": "Refugio La Carlota",
-  "sourceUrl": "https://example.com/fuente-opcional",
-  "notes": "Información adicional opcional",
+  "location": "La Carlota Shelter",
+  "sourceUrl": "https://example.com/optional-source",
+  "notes": "Optional additional information",
   "reporter": {
-    "service": "nombre-del-servicio",
-    "name": "nombre opcional",
-    "contact": "contacto opcional"
+    "service": "service-name",
+    "name": "optional name",
+    "contact": "optional contact"
   }
 }
 ```
 
-Respuesta `201`:
+`201` response:
 
 ```json
 {
   "data": {
     "id": "uuid",
     "fullName": "Maria Perez",
-    "relevantInfo": "Reporte externo — ubicación: Refugio La Carlota",
-    "sourceUrl": "https://example.com/fuente-opcional",
+    "relevantInfo": "External report — location: La Carlota Shelter",
+    "sourceUrl": "https://example.com/optional-source",
     "status": "citizen_report"
   }
 }
 ```
 
-Buenas prácticas aplicadas:
+Applied safeguards:
 
-- Usa un secreto separado de `INGEST_SECRET`.
-- El cliente externo no puede elegir `status`; siempre se guarda como `citizen_report`.
-- El hash/idempotencia se genera server-side.
-- El JSON usa schema estricto: campos inesperados son rechazados.
-- `sourceUrl`, si se envía, debe ser `http(s)`.
-- El body máximo es 256 KB.
-- JSON inválido responde `400`; body demasiado grande responde `413`.
-- Tiene rate limit por IP y por token.
-- Notifica al admin para revisión operacional.
+- Uses a secret separate from `INGEST_SECRET`.
+- External clients cannot choose `status`; reports are always stored as `citizen_report`.
+- Hashing/idempotency is generated server-side.
+- Strict JSON schema: unexpected fields are rejected.
+- `sourceUrl`, when provided, must be `http(s)`.
+- Maximum body size: 256 KB.
+- Invalid JSON returns `400`; oversized bodies return `413`.
+- Rate-limited by IP and token.
+- Notifies the admin for operational review.
 
-## Ingesta
+## Ingestion
 
-`POST /api/ingest` does an upsert by `sourceHash`. If `sourceHash` is omitted, the backend generates one from `sourceUrl:fullName`.
+`POST /api/ingest` upserts records by `sourceHash`. If `sourceHash` is omitted, the backend generates one from `sourceUrl:fullName`.
 
 ```bash
 curl -X POST "$PUBLIC_BASE_URL/api/ingest" \
@@ -138,8 +136,8 @@ curl -X POST "$PUBLIC_BASE_URL/api/ingest" \
     "people": [
       {
         "fullName": "Maria Perez",
-        "relevantInfo": "Encontrada en refugio La Carlota",
-        "sourceUrl": "https://example.com/fuente"
+        "relevantInfo": "Found at La Carlota shelter",
+        "sourceUrl": "https://example.com/source"
       }
     ]
   }'
@@ -147,7 +145,7 @@ curl -X POST "$PUBLIC_BASE_URL/api/ingest" \
 
 ## Analytics / PostHog
 
-El bot puede enviar eventos server-side a PostHog si `POSTHOG_API_KEY` está configurado.
+The bot can send server-side events to PostHog when `POSTHOG_API_KEY` is configured.
 
 Variables:
 
@@ -157,54 +155,53 @@ POSTHOG_HOST=https://us.i.posthog.com
 ANALYTICS_HASH_SALT=
 ```
 
-Notas de privacidad:
+Privacy notes:
 
-- No se envían nombres de personas buscadas, búsquedas, ubicaciones, notas, URLs, tokens ni IDs raw.
-- Si Telegram provee `username`, se usa como `distinctId` legible (`telegram:@usuario`) y como propiedad `telegramUsername` en PostHog.
-- Si Telegram no provee `username`, el ID de Telegram se hashea con `ANALYTICS_HASH_SALT` o `TELEGRAM_WEBHOOK_SECRET`.
-- IPs/clientes externos se registran solo como hash cuando aplica.
-- Si `POSTHOG_API_KEY` existe, producción debe tener `ANALYTICS_HASH_SALT` o `TELEGRAM_WEBHOOK_SECRET` configurado.
+- Searched names, search text, locations, notes, URLs, tokens, and raw IDs are not sent.
+- If Telegram provides a `username`, it is used as a readable `distinctId` (`telegram:@username`) and as the `telegramUsername` property in PostHog.
+- If Telegram does not provide a `username`, the Telegram ID is hashed with `ANALYTICS_HASH_SALT` or `TELEGRAM_WEBHOOK_SECRET`.
+- External client IPs/identifiers are only recorded as hashes when applicable.
+- If `POSTHOG_API_KEY` is set, production must also configure `ANALYTICS_HASH_SALT` or `TELEGRAM_WEBHOOK_SECRET`.
 
-Taxonomía oficial de eventos:
+Official event taxonomy:
 
-Eventos de Telegram:
+Telegram events:
 
-- `message_received`: mensaje recibido por el bot. No incluye el texto.
-- `telegram_command`: comando usado (`ayuda`, `buscar`, `lista`, `reportar`, etc.; admin mantiene nombres en inglés).
-- `search_performed`: búsqueda ejecutada; incluye bucket de longitud, tipo (`name`/`document`) y conteo de resultados, no la búsqueda ni la cédula.
-- `list_viewed`: lista vista; incluye página y conteos.
-- `citizen_report_created`: reporte ciudadano creado desde Telegram; solo flags/buckets, sin nombre, ubicación ni fuente.
-- `feedback_submitted`: feedback enviado; solo bucket de longitud, no el contenido.
-- `rate_limited`: rate limit aplicado en mensaje o callback.
+- `message_received`: message received by the bot. Does not include message text.
+- `telegram_command`: command used (`ayuda`, `buscar`, `lista`, `reportar`, etc.; admin commands keep English names).
+- `search_performed`: search executed; includes length bucket, query type (`name`/`document`), and result count. Does not include the search text or ID number.
+- `list_viewed`: list viewed; includes page and counts.
+- `citizen_report_created`: citizen report created from Telegram; only flags/buckets, no name, location, or source.
+- `feedback_submitted`: feedback sent; only length bucket, not the content.
+- `rate_limited`: rate limit applied to a message or callback.
 
-Eventos de API externa:
+External API events:
 
-- `external_api_list_requested`: consumo de `GET /api/v1/found-people`; incluye paginación/conteos y client ID hasheado.
-- `external_report_created`: reporte creado vía `POST /api/v1/found-people/reports`; solo flags y client ID hasheado.
+- `external_api_list_requested`: `GET /api/v1/found-people` usage; includes pagination/counts and hashed client ID.
+- `external_report_created`: report created through `POST /api/v1/found-people/reports`; only flags and hashed client ID.
 
-Identificación:
+Identification:
 
-- `identify`: cuando Telegram provee `username`, se asocia `telegramUsername` y el `distinctId` visible queda como `telegram:@usuario`. No es un evento de actividad.
+- `identify`: when Telegram provides a `username`, `telegramUsername` is associated and the visible `distinctId` becomes `telegram:@username`. This is not an activity event.
 
-Eventos fuera de taxonomía:
+Events outside the taxonomy:
 
-- `openclaw_debug_event` y `openclaw_direct_capture_test` fueron pruebas manuales únicas de conectividad y no forman parte del bot.
-- No debe existir ningún evento `openclaw_*` en la instrumentación de producción.
+- `openclaw_debug_event` and `openclaw_direct_capture_test` were one-off manual connectivity tests and are not part of the bot.
+- No `openclaw_*` event should exist in production instrumentation.
 
-``/health`` devuelve `analytics: "configured" | "disabled"` para verificar si PostHog está activo.
+`/health` returns `analytics: "configured" | "disabled"` to verify whether PostHog is active.
 
-## Uso en Telegram
+## Telegram usage
 
-- `/ayuda` muestra opciones y comandos principales.
-- `/buscar Nombre Apellido` busca por nombre.
-- `/buscar V12345678` busca por cédula; la búsqueda normaliza letras, puntos y guiones.
-- `/lista` muestra la lista paginada.
-- `/reportar` inicia un flujo guiado para reportar una persona encontrada. También acepta `/reportar Nombre Apellido | Ubicación | enlace opcional`.
-- `/fuentes` explica de dónde salen los datos y sus limitaciones.
-- `/sugerencia` inicia un flujo para enviar comentarios al administrador. También acepta `/sugerencia mensaje`.
-- `/cancelar` cancela una operación pendiente.
-- Cualquier texto libre se interpreta como búsqueda por nombre.
-
+- `/ayuda` shows the main options and commands.
+- `/buscar Nombre Apellido` searches by name.
+- `/buscar V12345678` searches by Venezuelan ID number; the search normalizes letters, dots, and hyphens.
+- `/lista` shows the paginated list.
+- `/reportar` starts a guided flow to report a found person. It also accepts `/reportar Full Name | Location | optional link`.
+- `/fuentes` explains where the data comes from and its limitations.
+- `/sugerencia` starts a flow to send feedback to the admin. It also accepts `/sugerencia message`.
+- `/cancelar` cancels a pending operation.
+- Any free-text message is treated as a name search.
 
 ## Admin commands
 
@@ -219,7 +216,7 @@ These commands only work from `TELEGRAM_ADMIN_CHAT_ID`:
 - `/admin_delete id-or-url` permanently deletes by ID or source URL.
 - `/admin_help` shows admin help.
 
-## Configurar webhook
+## Configure the Telegram webhook
 
 ```bash
 curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
@@ -227,21 +224,21 @@ curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
   -d "secret_token=$TELEGRAM_WEBHOOK_SECRET"
 ```
 
-## Borrado manual protegido
+## Protected manual deletion
 
 ```bash
 curl -X DELETE "$PUBLIC_BASE_URL/api/people" \
   -H "Authorization: Bearer $INGEST_SECRET" \
   -H "Content-Type: application/json" \
-  -d '{"sourceUrl":"https://example.com/fuente"}'
+  -d '{"sourceUrl":"https://example.com/source"}'
 ```
 
-## Seguridad y límites
+## Security and limits
 
-- `TELEGRAM_WEBHOOK_SECRET` debe estar configurado antes de exponer el webhook.
-- `POST /api/ingest` y `DELETE /api/people` requieren `Authorization: Bearer $INGEST_SECRET`.
-- Endpoints públicos y webhook tienen rate limit en memoria.
-- `pageSize` máximo: 10.
-- `page` máximo: 500.
-- Body JSON máximo: 256 KB.
-- Pool Postgres por defecto: `PG_POOL_MAX=5`.
+- `TELEGRAM_WEBHOOK_SECRET` must be configured before exposing the webhook.
+- `POST /api/ingest` and `DELETE /api/people` require `Authorization: Bearer $INGEST_SECRET`.
+- Public endpoints and the webhook use in-memory rate limits.
+- Maximum `pageSize`: 10.
+- Maximum `page`: 500.
+- Maximum JSON body size: 256 KB.
+- Default Postgres pool size: `PG_POOL_MAX=5`.
