@@ -622,7 +622,7 @@ async function handleCallback(callback: NonNullable<TelegramUpdate["callback_que
   if (data === "search") {
     await answerCallback(callback.id);
     setPendingChatAction(chatId, { kind: "search" });
-    return editMessage(chatId, messageId, "Escribe el nombre o nombre y apellido que quieres buscar.\n\nEjemplo: Maria Perez", [[button("📋 Ver lista", "list:1")]]);
+    return editMessage(chatId, messageId, "Escribe el nombre, apellido o cédula que quieres buscar.\n\nEjemplos: Maria Perez · V12345678", [[button("📋 Ver lista", "list:1")]]);
   }
 
   const adminActionMatch = data.match(/^adm:(verify|review|hide):([a-f0-9]{12})$/);
@@ -679,7 +679,7 @@ function menuButtons(): InlineButton[][] {
 
 async function askForSearch(chatId: number) {
   setPendingChatAction(chatId, { kind: "search" });
-  return sendMessage(chatId, "Escribe el nombre o nombre y apellido.\n\nEjemplo: Maria Perez", [[button("📋 Ver lista", "list:1")]]);
+  return sendMessage(chatId, "Escribe el nombre, apellido o cédula.\n\nEjemplos: Maria Perez · V12345678", [[button("📋 Ver lista", "list:1")]]);
 }
 
 async function handleSourceCommand(message: NonNullable<TelegramUpdate["message"]>, text: string) {
