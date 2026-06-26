@@ -4,6 +4,8 @@ const { Pool } = pg;
 
 export type RecordStatus = "verified" | "citizen_report" | "needs_review" | "removed";
 
+const PUBLIC_VISIBLE_STATUS_SQL = "status IN ('verified', 'citizen_report')";
+
 export type FoundPerson = {
   id: string;
   fullName: string;
@@ -121,12 +123,12 @@ export async function listPeople(page: number, pageSize: number) {
   const [items, total] = await Promise.all([
     pool.query<FoundPerson>(
       `${baseSelect()}
-       WHERE status <> 'removed'
+       WHERE ${PUBLIC_VISIBLE_STATUS_SQL}
        ORDER BY lower(full_name) ASC, source_url ASC
        LIMIT $1 OFFSET $2`,
       [pageSize, offset],
     ),
-    pool.query<{ count: string }>("SELECT count(*) FROM found_people WHERE status <> 'removed'"),
+    pool.query<{ count: string }>(`SELECT count(*) FROM found_people WHERE ${PUBLIC_VISIBLE_STATUS_SQL}`),
   ]);
 
   return pageResult(items.rows, page, pageSize, Number(total.rows[0]?.count ?? 0));
@@ -167,7 +169,7 @@ function normalizeDocumentId(value: string | null | undefined) {
 }
 
 function searchWhereClause() {
-  return `status <> 'removed'
+  return `${PUBLIC_VISIBLE_STATUS_SQL}
     AND (
       unaccent(lower(full_name)) ILIKE unaccent(lower($1))
       OR (
@@ -240,7 +242,7 @@ export async function getFoundPeopleStats() {
   const result = await pool.query<{ total: string; visible: string; citizen_reports: string; needs_review: string; verified: string; removed: string }>(
     `SELECT
        count(*) AS total,
-       count(*) FILTER (WHERE status <> 'removed') AS visible,
+       count(*) FILTER (WHERE status IN ('verified', 'citizen_report')) AS visible,
        count(*) FILTER (WHERE status = 'citizen_report') AS citizen_reports,
        count(*) FILTER (WHERE status = 'needs_review') AS needs_review,
        count(*) FILTER (WHERE status = 'verified') AS verified,

@@ -68,7 +68,7 @@ Response:
 
 Security notes:
 
-- Only visible records are returned; records marked as `removed` are excluded.
+- Only public-visible records are returned: `verified` and `citizen_report`. Records marked as `needs_review` or `removed`/hidden are excluded.
 - Maximum `page`: 500.
 - Maximum `pageSize`: 10.
 - Rate-limited by IP.
@@ -129,6 +129,8 @@ Applied safeguards:
 `POST /api/ingest` upserts records by `sourceHash`. If `sourceHash` is omitted, the backend generates one from `sourceUrl:fullName`.
 
 Optional `documentId` stores a Venezuelan ID number as normalized digits for private exact/partial search. It is not returned by the public listing/search API; public text should only include masked document references such as `cédula terminada en 1234`.
+
+Public list/search responses only include `verified` and `citizen_report` records. `needs_review` is intentionally withheld from public results until an admin verifies it; `removed` is treated as hidden.
 
 ```bash
 curl -X POST "$PUBLIC_BASE_URL/api/ingest" \
