@@ -171,7 +171,7 @@ Eventos de Telegram:
 
 - `message_received`: mensaje recibido por el bot. No incluye el texto.
 - `telegram_command`: comando usado (`ayuda`, `buscar`, `lista`, `reportar`, etc.; admin mantiene nombres en inglés).
-- `search_performed`: búsqueda ejecutada; incluye bucket de longitud y conteo de resultados, no la búsqueda.
+- `search_performed`: búsqueda ejecutada; incluye bucket de longitud, tipo (`name`/`document`) y conteo de resultados, no la búsqueda ni la cédula.
 - `list_viewed`: lista vista; incluye página y conteos.
 - `pending_action_step`: paso de flujo conversacional (`search`, `feedback`, `report_*`), sin contenido del mensaje.
 - `citizen_report_created`: reporte ciudadano creado desde Telegram; solo flags/buckets, sin nombre, ubicación ni fuente.
@@ -199,6 +199,7 @@ Eventos fuera de taxonomía:
 
 - `/ayuda` muestra opciones y comandos principales.
 - `/buscar Nombre Apellido` busca por nombre.
+- `/buscar V12345678` busca por cédula; la búsqueda normaliza letras, puntos y guiones.
 - `/lista` muestra la lista paginada.
 - `/reportar` inicia un flujo guiado para reportar una persona encontrada. También acepta `/reportar Nombre Apellido | Ubicación | enlace opcional`.
 - `/fuentes` explica de dónde salen los datos y sus limitaciones.

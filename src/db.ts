@@ -126,25 +126,56 @@ export async function listPeople(page: number, pageSize: number) {
   return pageResult(items.rows, page, pageSize, Number(total.rows[0]?.count ?? 0));
 }
 
-export async function searchPeople(name: string, page: number, pageSize: number) {
+export async function searchPeople(search: string, page: number, pageSize: number) {
   const offset = (page - 1) * pageSize;
-  const query = `%${name}%`;
+  const nameQuery = `%${search}%`;
+  const documentDigits = normalizeDocumentDigits(search);
+  const documentQuery = documentDigits ? `%${documentDigits}%` : null;
+  const params = [nameQuery, documentQuery, pageSize, offset];
+  const where = searchWhereClause();
   const [items, total] = await Promise.all([
     pool.query<FoundPerson>(
       `${baseSelect()}
-       WHERE status <> 'removed'
-         AND unaccent(lower(full_name)) ILIKE unaccent(lower($1))
+       WHERE ${where}
        ORDER BY lower(full_name) ASC, source_url ASC
-       LIMIT $2 OFFSET $3`,
-      [query, pageSize, offset],
+       LIMIT $3 OFFSET $4`,
+      params,
     ),
     pool.query<{ count: string }>(
-      "SELECT count(*) FROM found_people WHERE status <> 'removed' AND unaccent(lower(full_name)) ILIKE unaccent(lower($1))",
-      [query],
+      `SELECT count(*) FROM found_people WHERE ${where}`,
+      [nameQuery, documentQuery],
     ),
   ]);
 
   return pageResult(items.rows, page, pageSize, Number(total.rows[0]?.count ?? 0));
+}
+
+function normalizeDocumentDigits(value: string) {
+  const digits = value.replace(/\D/g, "");
+  return digits.length >= 5 ? digits : null;
+}
+
+function searchWhereClause() {
+  return `status <> 'removed'
+    AND (
+      unaccent(lower(full_name)) ILIKE unaccent(lower($1))
+      OR (
+        $2::text IS NOT NULL
+        AND regexp_replace(concat_ws(' ',
+          full_name,
+          relevant_info,
+          raw->>'cedula',
+          raw->>'cédula',
+          raw->>'cedulaIdentidad',
+          raw->>'documento',
+          raw->>'document',
+          raw->>'documentId',
+          raw->>'idNumber',
+          raw->>'id_number',
+          raw->>'dni'
+        ), '\\D', '', 'g') LIKE $2
+      )
+    )`;
 }
 
 export async function upsertPeople(people: Array<{

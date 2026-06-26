@@ -661,6 +661,7 @@ Antes de tomar decisiones, verifica siempre la información con familiares, fuen
 <b>Cómo usarlo</b>
 • Escribe un nombre directamente para buscar.
 • /buscar nombre — buscar por nombre
+• /buscar V12345678 — buscar por cédula
 • /lista — ver lista de personas encontradas
 • /reportar — reportar una persona encontrada
 • /fuentes — fuentes y limitaciones
@@ -828,20 +829,29 @@ async function sendPeoplePage(chatId: number, page: number, messageId?: number, 
 
 async function sendSearchResults(chatId: number, query: string, message?: NonNullable<TelegramUpdate["message"]>) {
   const parsed = SearchQuerySchema.shape.name.safeParse(query);
-  if (!parsed.success) return sendMessage(chatId, "Escribe al menos 2 caracteres y máximo 80 para buscar.");
+  if (!parsed.success) return sendMessage(chatId, "Escribe al menos 2 caracteres y máximo 80 para buscar. Puedes buscar por nombre o cédula.");
 
   await incrementMetric("telegram_search");
   const result = await searchPeople(parsed.data, 1, 5);
+  const documentSearch = documentSearchLabel(parsed.data);
   capture(telegramEvent("search_performed", chatId), telegramDistinctId(chatId, message?.from), {
     queryLengthBucket: lengthBucket(parsed.data.length),
+    queryType: documentSearch ? "document" : "name",
     resultCount: result.items.length,
     total: result.total,
   });
+  const displayQuery = documentSearch ?? `“${escapeHtml(parsed.data)}”`;
   const text = result.total === 0
-    ? `No encontré resultados para “${escapeHtml(parsed.data)}”.\n\nPrueba con menos palabras o revisa la lista completa.`
-    : formatPeopleList(result.items, `Resultados para “${parsed.data}”`, result.total);
+    ? `No encontré resultados para ${displayQuery}.\n\nPrueba con menos caracteres o revisa la lista completa.`
+    : formatPeopleList(result.items, `Resultados para ${displayQuery}`, result.total);
 
   return sendMessage(chatId, text, [[button("🔎 Buscar", "search"), button("📋 Lista", "list:1")]]);
+}
+
+function documentSearchLabel(query: string) {
+  const digits = query.replace(/\D/g, "");
+  if (digits.length < 5) return null;
+  return `cédula terminada en ${escapeHtml(digits.slice(-4))}`;
 }
 
 function normalizeOptionalSourceUrl(value: string | undefined) {
