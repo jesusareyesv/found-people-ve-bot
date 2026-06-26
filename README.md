@@ -173,7 +173,6 @@ Eventos de Telegram:
 - `telegram_command`: comando usado (`ayuda`, `buscar`, `lista`, `reportar`, etc.; admin mantiene nombres en inglés).
 - `search_performed`: búsqueda ejecutada; incluye bucket de longitud, tipo (`name`/`document`) y conteo de resultados, no la búsqueda ni la cédula.
 - `list_viewed`: lista vista; incluye página y conteos.
-- `pending_action_step`: paso de flujo conversacional (`search`, `feedback`, `report_*`), sin contenido del mensaje.
 - `citizen_report_created`: reporte ciudadano creado desde Telegram; solo flags/buckets, sin nombre, ubicación ni fuente.
 - `feedback_submitted`: feedback enviado; solo bucket de longitud, no el contenido.
 - `callback_clicked`: botón/callback usado; por ahora navegación de lista.

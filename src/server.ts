@@ -493,8 +493,6 @@ function cancelPendingAction(chatId: number) {
 async function handlePendingChatAction(message: NonNullable<TelegramUpdate["message"]>, text: string, pending: PendingChatAction) {
   if (text.toLowerCase() === "cancelar" || isCommand(text, "cancelar")) return cancelPendingAction(message.chat.id);
 
-  capture(telegramEvent("pending_action_step", message.chat.id), telegramDistinctId(message.chat.id, message.from), { kind: pending.kind, textLengthBucket: lengthBucket(text.length) });
-
   if (pending.kind === "search") {
     pendingChatActions.delete(message.chat.id);
     return sendSearchResults(message.chat.id, text.trim(), message);
