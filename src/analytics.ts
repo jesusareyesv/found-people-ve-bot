@@ -17,7 +17,8 @@ const client = apiKey
     })
   : null;
 
-export type AnalyticsProperties = Record<string, string | number | boolean | null | undefined>;
+export type AnalyticsProperty = string | number | boolean | null | undefined | AnalyticsProperty[] | { [key: string]: AnalyticsProperty };
+export type AnalyticsProperties = Record<string, AnalyticsProperty>;
 
 export function analyticsEnabled() {
   return client !== null;

@@ -126,7 +126,16 @@ Applied safeguards:
 
 ## Ingestion
 
-`POST /api/ingest` upserts records by `sourceHash`. If `sourceHash` is omitted, the backend generates one from `sourceUrl:fullName`.
+The primary ingestion path runs inside this bot repo and writes directly to Postgres via `upsertPeople(...)`:
+
+```bash
+npm run ingest:found-people            # dry-run; writes an artifact only
+npm run ingest:found-people -- --write # scrape and upsert into the bot database
+```
+
+The scraper reads the Tiltely catalog, ingests only found/localized upstream sources, paginates each source safely, extracts `documentId` when available, masks public document references, and emits `found_people_scrape_completed` in PostHog with aggregate counts only.
+
+`POST /api/ingest` remains available for external/manual ingestion and upserts records by `sourceHash`. If `sourceHash` is omitted, the backend generates one from `sourceUrl:fullName`.
 
 Optional `documentId` stores a Venezuelan ID number as normalized digits for private exact/partial search. It is not returned by the public listing/search API; public text should only include masked document references such as `cédula terminada en 1234`.
 
@@ -181,8 +190,9 @@ Telegram events:
 - `feedback_submitted`: feedback sent; only length bucket, not the content.
 - `rate_limited`: rate limit applied to a message or callback.
 
-External API events:
+External API / ingestion events:
 
+- `found_people_scrape_completed`: internal scraper finished; includes aggregate totals, per-source counts, document-ID counts, duration, dry-run/write flag, and provider error counts. Does not include names, cédulas, URLs, raw records, or secrets.
 - `search_matched`: public `/api/search` returned at least one match; uses a hashed client identifier and contains no query text or raw ID.
 - `external_api_list_requested`: `GET /api/v1/found-people` usage; includes pagination/counts and hashed client ID.
 - `external_report_created`: report created through `POST /api/v1/found-people/reports`; only flags and hashed client ID.
