@@ -14,6 +14,7 @@ const EXTERNAL_REPORT_API_LIMIT = { count: 30, windowMs: 60_000 };
 const PeopleQuerySchema = z.object({
   page: z.coerce.number().int().min(1).max(500).default(1),
   pageSize: z.coerce.number().int().min(1).max(10).default(5),
+  q: z.string().trim().min(2).max(80).optional(),
 });
 
 const SearchQuerySchema = PeopleQuerySchema.extend({
@@ -152,13 +153,17 @@ const server = createServer(async (request, response) => {
       const parsed = PeopleQuerySchema.safeParse(Object.fromEntries(url.searchParams));
       if (!parsed.success) return json(response, 400, { error: "Invalid pagination" });
 
-      const result = await listPeople(parsed.data.page, parsed.data.pageSize);
+      const { page, pageSize, q } = parsed.data;
+      const result = q
+        ? await searchPeople(q, page, pageSize)
+        : await listPeople(page, pageSize);
       await incrementMetric("external_api_list");
       captureSystem("external_api_list_requested", {
-        page: parsed.data.page,
-        pageSize: parsed.data.pageSize,
+        page,
+        pageSize,
         total: result.total,
         clientId: hashIdentifier(clientKey),
+        ...(q ? { query: q } : {}),
       });
       return json(response, 200, {
         data: result.items,
